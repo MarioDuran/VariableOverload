@@ -27,7 +27,7 @@
             text-shadow: 0 0 15px #0f0;
             letter-spacing: 5px;
         }
-        p { color: #55ff55; }
+        p { color: #55ff55; font-size: 18px; }
         #game-container {
             position: absolute;
             top: 0;
@@ -52,6 +52,8 @@
     <div id="info">
         <h1>START</h1>
         <p>↓ Pulsa ENTER VR abajo ↓</p>
+        <p><b>Mando Izq:</b> Joystick (Mover) | Botón Lateral/Grip (Correr) | Gatillo (Disparar Izq)</p>
+        <p><b>Mando Der:</b> Joystick (Girar) | Botones A/B (Cambiar Arma) | Gatillo (Disparar Der)</p>
         <div id="error-log"></div>
     </div>
 
@@ -83,9 +85,9 @@
             let stamina = 100;
             const MAX_STAMINA = 100;
             
-            let clipAmmo = 30;
-            const MAX_CLIP = 30;
-            let reserveAmmo = 60;
+            let clipAmmo = 60; // Aumenté el cargador base por tener dos pistolas
+            const MAX_CLIP = 60;
+            let reserveAmmo = 120;
             let isReloading = false;
 
             let currentPath = "/";
@@ -110,12 +112,12 @@
 
             const clock = new THREE.Clock();
 
-            // HUD Flotante Despejado
+            // HUD
             const hudCanvas = document.createElement('canvas');
             hudCanvas.width = 1024; hudCanvas.height = 256;
             const vrHudCtx = hudCanvas.getContext('2d');
             const vrHudTex = new THREE.CanvasTexture(hudCanvas);
-            let vrHudMesh, weaponMesh, weaponMat, gameOverMesh;
+            let vrHudMesh, rightWeaponMesh, leftWeaponMesh, weaponMat, gameOverMesh;
 
             let audioCtx;
             let listener;
@@ -147,7 +149,6 @@
                 });
                 document.body.appendChild(vrButton);
 
-                // Sistema de Locomoción y Giro
                 playerDolly = new THREE.Group();
                 scene.add(playerDolly);
                 playerDolly.add(camera);
@@ -160,7 +161,7 @@
                 camera.add(listener);
                 bgm = new THREE.Audio(listener);
 
-                // HUD Visor (Arriba)
+                // --- HUD VISOR (BAJADO) ---
                 const hudGeo = new THREE.PlaneGeometry(1.6, 0.4); 
                 const hudMat = new THREE.MeshBasicMaterial({ 
                     map: vrHudTex, 
@@ -170,9 +171,17 @@
                 vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
                 vrHudMesh.renderOrder = 999;
                 
-                // Moverlo a la parte superior de la vista
-                vrHudMesh.position.set(0, 0.5, -1.2);
+                // Bajamos el HUD (antes 0.5, ahora 0.15) para que no tape el centro visual
+                vrHudMesh.position.set(0, 0.15, -1.2);
+                vrHudMesh.rotation.x = -0.05; // Leve inclinación
                 camera.add(vrHudMesh);
+
+                // CREAR MATERIAL COMPARTIDO PARA LAS DOS PISTOLAS
+                weaponMat = new THREE.MeshLambertMaterial({ 
+                    color: weaponColors['int'], 
+                    emissive: weaponColors['int'], 
+                    emissiveIntensity: 0.8 
+                });
 
                 // MANDOS
                 const onControllerConnected = (event) => {
@@ -181,10 +190,14 @@
 
                     if (handedness === 'right') {
                         rightController = controller;
-                        buildRightController(rightController);
-                        rightController.addEventListener('selectstart', onTriggerDown); 
+                        rightWeaponMesh = createGunMesh();
+                        rightController.add(rightWeaponMesh);
+                        rightController.addEventListener('selectstart', () => fireWeapon(rightController, rightWeaponMesh)); 
                     } else if (handedness === 'left') {
                         leftController = controller;
+                        leftWeaponMesh = createGunMesh();
+                        leftController.add(leftWeaponMesh);
+                        leftController.addEventListener('selectstart', () => fireWeapon(leftController, leftWeaponMesh));
                     }
                 };
 
@@ -230,28 +243,26 @@
                 noise.start(t); osc.start(t);
             }
 
-            function buildRightController(ctrl) {
-                weaponMesh = new THREE.Group();
+            // FUNCIÓN REUTILIZABLE PARA CREAR ARMAS
+            function createGunMesh() {
+                const mesh = new THREE.Group();
                 const gunDarkMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
-                weaponMat = new THREE.MeshLambertMaterial({ color: weaponColors['int'], emissive: weaponColors['int'], emissiveIntensity: 0.8 });
                 
                 const body = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.3), gunDarkMat);
                 const core = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.03, 0.15), weaponMat);
                 core.position.set(0, 0.06, -0.05);
-                weaponMesh.add(body); weaponMesh.add(core);
+                mesh.add(body); mesh.add(core);
 
-                // LÁSER (Añadido DIRECTAMENTE al arma para alineación perfecta)
                 const laserGeo = new THREE.BufferGeometry().setFromPoints([
                     new THREE.Vector3(0, 0.06, 0), new THREE.Vector3(0, 0.06, -50)
                 ]);
                 const laserMat = new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
                 const aimLine = new THREE.Line(laserGeo, laserMat);
-                weaponMesh.add(aimLine); 
+                mesh.add(aimLine); 
                 
-                // Rotar el arma para que se sienta natural en la mano VR (apuntando levemente hacia abajo)
-                weaponMesh.position.set(0, -0.05, -0.1);
-                weaponMesh.rotation.x = -Math.PI / 8;
-                ctrl.add(weaponMesh);
+                mesh.position.set(0, -0.05, -0.1);
+                mesh.rotation.x = -Math.PI / 8;
+                return mesh;
             }
 
             function buildEnvironment() {
@@ -268,7 +279,6 @@
             }
 
             function updateHUD(message = "") {
-                // Borrar todo el lienzo (Totalmente transparente)
                 vrHudCtx.clearRect(0, 0, 1024, 256);
 
                 // --- 1. SUPERIOR IZQUIERDA: Arma y Munición ---
@@ -308,7 +318,6 @@
                 const cellW = mapSize / GRID_SIZE;
                 const cellH = mapSize / GRID_SIZE;
 
-                // Fondo para que el mapa se distinga bien
                 vrHudCtx.fillStyle = 'rgba(0, 10, 0, 0.7)';
                 vrHudCtx.fillRect(offsetX, offsetY, mapSize, mapSize);
                 vrHudCtx.strokeStyle = '#0f0';
@@ -492,7 +501,7 @@
                     gameOverMesh = null;
                 }
                 
-                isGameRunning = true; isGameOver = false; health = 100; score = 0; clipAmmo = MAX_CLIP; reserveAmmo = 60; stamina = 100;
+                isGameRunning = true; isGameOver = false; health = 100; score = 0; clipAmmo = MAX_CLIP; reserveAmmo = 120; stamina = 100;
                 
                 if (!bgm.isPlaying) {
                     const audioLoader = new THREE.AudioLoader();
@@ -539,16 +548,16 @@
                 enemies.push({ mesh, material, type, box: new THREE.Box3().setFromObject(mesh), speed: 4 + (score*0.1) });
             }
 
-            function onTriggerDown() {
-                if (!rightController) return;
+            // --- LÓGICA DE DISPARO COMPARTIDA PARA AMBAS MANOS ---
+            function fireWeapon(ctrl, wpnMesh) {
+                if (!ctrl || !wpnMesh) return;
 
-                // Extraer la dirección de disparo DIRECTAMENTE de la Matrix del Arma
-                const matrix = new THREE.Matrix4().extractRotation(weaponMesh.matrixWorld);
+                const matrix = new THREE.Matrix4().extractRotation(wpnMesh.matrixWorld);
                 const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(matrix);
                 const startPos = new THREE.Vector3();
-                weaponMesh.getWorldPosition(startPos);
+                wpnMesh.getWorldPosition(startPos);
                 
-                // Si el jugador está muerto, se usa el disparo como botón
+                // Reinicio desde Pantalla Game Over (ambas manos funcionan)
                 if (isGameOver && gameOverMesh) {
                     const tempLaser = new THREE.Mesh(
                         new THREE.CylinderGeometry(0.02, 0.02, 5, 8).rotateX(Math.PI/2),
@@ -560,7 +569,6 @@
                     setTimeout(() => scene.remove(tempLaser), 150);
                     playShootSound();
 
-                    // Detectar impacto en Pantalla Restart
                     const ray = new THREE.Raycaster(startPos, direction);
                     const hits = ray.intersectObject(gameOverMesh);
                     if (hits.length > 0) {
@@ -639,9 +647,9 @@
                             if (Math.abs(axY) < 0.2) axY = 0;
 
                             if (source.handedness === 'left') {
-                                // MOVIMIENTO
+                                // CORRER CON BOTÓN GRIP (Índice 1 en mandos de Meta)
                                 let isSprinting = false;
-                                if (source.gamepad.buttons[0] && source.gamepad.buttons[0].pressed && stamina > 0) {
+                                if (source.gamepad.buttons[1] && source.gamepad.buttons[1].pressed && stamina > 0) {
                                     isSprinting = true;
                                     stamina -= 35 * delta;
                                     if(stamina < 0) stamina = 0;
@@ -653,7 +661,6 @@
                                 if (axX !== 0 || axY !== 0) {
                                     const moveSpeed = (isSprinting && stamina > 0 ? 11 : 6) * delta;
                                     
-                                    // Dirección de movimiento relativa a dónde mira la cámara!
                                     const fwDir = new THREE.Vector3();
                                     camera.getWorldDirection(fwDir);
                                     fwDir.y = 0; 
