@@ -83,7 +83,6 @@
             // Stamina y Munición
             let stamina = 100;
             const MAX_STAMINA = 100;
-            let lastStaminaDisplay = 100;
             
             let clipAmmo = 30;
             const MAX_CLIP = 30;
@@ -106,20 +105,21 @@
             let walls = [], wallMeshes = [], doors = [], enemies = [], dyingEnemies = [], lasers = [];
             let spawnInterval;
 
-            // Pathfinding
+            // Pathfinding y UI Loop
             let flowField = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(9999));
             let lastFlowFieldUpdate = 0;
+            let lastHudUpdate = 0;
 
             const clock = new THREE.Clock();
 
-            // UI
+            // Interfaz Principal (Casco/Visor)
             const hudCanvas = document.createElement('canvas');
-            hudCanvas.width = 512; hudCanvas.height = 256;
+            hudCanvas.width = 1024; hudCanvas.height = 256;
             const vrHudCtx = hudCanvas.getContext('2d');
             const vrHudTex = new THREE.CanvasTexture(hudCanvas);
-            let vrHudMesh, weaponMesh, weaponMat;
+            let vrHudMesh, weaponMesh, weaponMat, gameOverMesh;
 
-            // AUDIO GLOBALES
+            // Audio
             let audioCtx;
             let listener;
             let bgm;
@@ -162,6 +162,21 @@
                 camera.add(listener);
                 bgm = new THREE.Audio(listener);
 
+                // --- CREACIÓN DEL HUD DE VISOR ESTÁTICO ---
+                const hudGeo = new THREE.PlaneGeometry(0.8, 0.2); // Ancho x Alto
+                const hudMat = new THREE.MeshBasicMaterial({ 
+                    map: vrHudTex, 
+                    transparent: true, 
+                    depthTest: false // Se dibuja sobre TODO (incluso las paredes)
+                });
+                vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
+                vrHudMesh.renderOrder = 999;
+                
+                // Colocarlo debajo del centro de visión (mirando un poco hacia arriba)
+                vrHudMesh.position.set(0, -0.35, -0.8);
+                vrHudMesh.rotation.x = -Math.PI / 10;
+                camera.add(vrHudMesh);
+
                 // MANDOS
                 const onControllerConnected = (event) => {
                     const controller = event.target;
@@ -173,7 +188,6 @@
                         rightController.addEventListener('selectstart', onTriggerDown); 
                     } else if (handedness === 'left') {
                         leftController = controller;
-                        buildLeftController(leftController);
                     }
                 };
 
@@ -186,56 +200,37 @@
                 playerDolly.add(controller2);
 
                 buildEnvironment();
-                updateHUD();
+                updateHUD("SISTEMA INICIADO");
 
                 window.addEventListener('resize', onWindowResize);
                 renderer.setAnimationLoop(animate);
             }
 
-            // --- SONIDO DE BALAZO REALISTA (Ruido Blanco + Punch) ---
             function playShootSound() {
                 if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 if (audioCtx.state === 'suspended') audioCtx.resume();
-
                 const t = audioCtx.currentTime;
 
-                // 1. Ruido Blanco (Estallido)
                 const bufferSize = audioCtx.sampleRate * 0.2; 
                 const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
                 const data = buffer.getChannelData(0);
-                for (let i = 0; i < bufferSize; i++) {
-                    data[i] = Math.random() * 2 - 1;
-                }
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
                 const noise = audioCtx.createBufferSource();
                 noise.buffer = buffer;
-
                 const noiseFilter = audioCtx.createBiquadFilter();
                 noiseFilter.type = 'lowpass';
                 noiseFilter.frequency.value = 3500;
-
                 const noiseGain = audioCtx.createGain();
                 noiseGain.gain.setValueAtTime(1, t);
                 noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+                noise.connect(noiseFilter); noiseFilter.connect(noiseGain); noiseGain.connect(audioCtx.destination);
 
-                noise.connect(noiseFilter);
-                noiseFilter.connect(noiseGain);
-                noiseGain.connect(audioCtx.destination);
+                const osc = audioCtx.createOscillator(); osc.type = 'sine';
+                osc.frequency.setValueAtTime(150, t); osc.frequency.exponentialRampToValueAtTime(0.01, t + 0.1);
+                const oscGain = audioCtx.createGain(); oscGain.gain.setValueAtTime(1, t); oscGain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+                osc.connect(oscGain); oscGain.connect(audioCtx.destination);
 
-                // 2. Frecuencia Baja (Punch del arma)
-                const osc = audioCtx.createOscillator();
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(150, t);
-                osc.frequency.exponentialRampToValueAtTime(0.01, t + 0.1);
-
-                const oscGain = audioCtx.createGain();
-                oscGain.gain.setValueAtTime(1, t);
-                oscGain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
-
-                osc.connect(oscGain);
-                oscGain.connect(audioCtx.destination);
-
-                noise.start(t);
-                osc.start(t);
+                noise.start(t); osc.start(t);
             }
 
             function buildRightController(ctrl) {
@@ -260,62 +255,136 @@
                 ctrl.add(weaponMesh);
             }
 
-            function buildLeftController(ctrl) {
-                const hudGeo = new THREE.PlaneGeometry(0.2, 0.1);
-                const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, side: THREE.DoubleSide });
-                vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
-                
-                vrHudMesh.position.set(0, 0.05, -0.1);
-                vrHudMesh.rotation.x = -Math.PI / 4;
-                ctrl.add(vrHudMesh);
-            }
-
             function buildEnvironment() {
                 const gridGeo = new THREE.PlaneGeometry(GRID_SIZE * TILE_SIZE, GRID_SIZE * TILE_SIZE, GRID_SIZE, GRID_SIZE);
                 const gridMat = new THREE.MeshBasicMaterial({ color: 0x003300, wireframe: true });
-                
                 const floor = new THREE.Mesh(gridGeo, gridMat);
                 floor.rotation.x = -Math.PI / 2;
                 floor.position.set((GRID_SIZE * TILE_SIZE)/2 - TILE_SIZE/2, 0, (GRID_SIZE * TILE_SIZE)/2 - TILE_SIZE/2);
                 scene.add(floor);
-
                 const ceiling = new THREE.Mesh(gridGeo, gridMat);
                 ceiling.rotation.x = Math.PI / 2;
                 ceiling.position.set((GRID_SIZE * TILE_SIZE)/2 - TILE_SIZE/2, TILE_SIZE, (GRID_SIZE * TILE_SIZE)/2 - TILE_SIZE/2);
                 scene.add(ceiling);
             }
 
+            // --- ACTUALIZACIÓN DE INTERFAZ ESTÁTICA Y RADAR ---
             function updateHUD(message = "") {
-                vrHudCtx.fillStyle = 'rgba(0, 20, 0, 0.9)';
-                vrHudCtx.fillRect(0, 0, 512, 256);
+                vrHudCtx.clearRect(0, 0, 1024, 256);
                 
+                // Fondo semi-transparente
+                vrHudCtx.fillStyle = 'rgba(0, 15, 0, 0.85)';
+                vrHudCtx.fillRect(0, 0, 1024, 256);
+                
+                // Marcos (768 para Datos, 256 para Minimapa)
                 vrHudCtx.strokeStyle = '#' + weaponColors[weaponTypes[currentWeaponIndex]].toString(16).padStart(6,'0');
-                vrHudCtx.lineWidth = 10;
-                vrHudCtx.strokeRect(0, 0, 512, 256);
+                vrHudCtx.lineWidth = 6;
+                vrHudCtx.strokeRect(0, 0, 768, 256); 
+                vrHudCtx.strokeRect(768, 0, 256, 256);
 
+                // --- SECCIÓN IZQUIERDA (Estadísticas) ---
                 vrHudCtx.fillStyle = '#0f0';
-                vrHudCtx.font = 'bold 36px Courier New';
-                vrHudCtx.fillText(`HP: ${health}%`, 20, 50);
-                vrHudCtx.fillText(`KILLS: ${score}`, 280, 50);
+                vrHudCtx.font = 'bold 38px Courier New';
+                vrHudCtx.fillText(`HP: ${health}%`, 20, 55);
+                vrHudCtx.fillText(`KILLS: ${score}`, 400, 55);
                 
                 vrHudCtx.fillStyle = '#0ff';
-                vrHudCtx.fillText(`AMMO: ${clipAmmo}/${reserveAmmo}`, 20, 100);
+                vrHudCtx.fillText(`AMMO: ${clipAmmo} / ${reserveAmmo}`, 20, 110);
 
-                // BARRA DE STAMINA
+                // BARRA DE STAMINA Larga
                 vrHudCtx.fillStyle = '#004400';
-                vrHudCtx.fillRect(20, 120, 470, 15);
-                vrHudCtx.fillStyle = stamina > 20 ? '#0f0' : '#ff0000'; // Rojo si estás cansado
-                vrHudCtx.fillRect(20, 120, (stamina / MAX_STAMINA) * 470, 15);
+                vrHudCtx.fillRect(20, 130, 700, 20);
+                vrHudCtx.fillStyle = stamina > 20 ? '#0f0' : '#ff0000';
+                vrHudCtx.fillRect(20, 130, (stamina / MAX_STAMINA) * 700, 20);
 
                 vrHudCtx.fillStyle = vrHudCtx.strokeStyle;
-                vrHudCtx.fillText(`ARMA: [${weaponTypes[currentWeaponIndex].toUpperCase()}]`, 20, 180);
+                vrHudCtx.fillText(`ARMA: [${weaponTypes[currentWeaponIndex].toUpperCase()}]`, 20, 200);
 
                 if(message) {
                     vrHudCtx.fillStyle = '#ffaa00';
-                    vrHudCtx.font = 'bold 28px Courier New';
-                    vrHudCtx.fillText(message, 20, 230);
+                    vrHudCtx.font = 'bold 30px Courier New';
+                    vrHudCtx.fillText(message, 350, 200);
                 }
+
+                // --- SECCIÓN DERECHA (Minimapa Dinámico) ---
+                const mapSize = 256;
+                const offsetX = 768;
+                const cellW = mapSize / GRID_SIZE;
+                const cellH = mapSize / GRID_SIZE;
+
+                vrHudCtx.fillStyle = '#000500';
+                vrHudCtx.fillRect(offsetX, 0, mapSize, mapSize);
+
+                for(let z=0; z<GRID_SIZE; z++){
+                    for(let x=0; x<GRID_SIZE; x++){
+                        if(mapGrid[z] && mapGrid[z][x] === 1){
+                            vrHudCtx.fillStyle = '#005500';
+                            vrHudCtx.fillRect(offsetX + x*cellW, z*cellH, cellW+1, cellH+1); 
+                        } else if (mapGrid[z] && mapGrid[z][x] === 2) {
+                            vrHudCtx.fillStyle = '#aaaa00'; // Puertas (Amarillo)
+                            vrHudCtx.fillRect(offsetX + x*cellW, z*cellH, cellW, cellH);
+                        }
+                    }
+                }
+
+                // Dibujar Jugador
+                let px = (playerDolly.position.x / TILE_SIZE) * cellW;
+                let pz = (playerDolly.position.z / TILE_SIZE) * cellH;
+                vrHudCtx.fillStyle = '#ffffff';
+                vrHudCtx.beginPath();
+                vrHudCtx.arc(offsetX + px, pz, 5, 0, Math.PI*2);
+                vrHudCtx.fill();
+
+                // Dibujar Enemigos
+                vrHudCtx.fillStyle = '#ff0000';
+                enemies.forEach(e => {
+                    let ex = (e.mesh.position.x / TILE_SIZE) * cellW;
+                    let ez = (e.mesh.position.z / TILE_SIZE) * cellH;
+                    vrHudCtx.fillRect(offsetX + ex - 3, ez - 3, 6, 6);
+                });
+
                 vrHudTex.needsUpdate = true;
+            }
+
+            // --- LÓGICA DE GAME OVER Y REINICIO ---
+            function showGameOverScreen() {
+                isGameOver = true;
+                isGameRunning = false;
+                
+                const goCanvas = document.createElement('canvas');
+                goCanvas.width = 1024; goCanvas.height = 1024;
+                const goCtx = goCanvas.getContext('2d');
+                
+                goCtx.fillStyle = 'rgba(40, 0, 0, 0.95)';
+                goCtx.fillRect(0, 0, 1024, 1024);
+                goCtx.strokeStyle = '#ff0000'; 
+                goCtx.lineWidth = 15; 
+                goCtx.strokeRect(0, 0, 1024, 1024);
+                
+                goCtx.textAlign = 'center';
+                goCtx.fillStyle = '#ff0000';
+                goCtx.font = 'bold 120px Courier New';
+                goCtx.fillText("KERNEL PANIC", 512, 300);
+                
+                goCtx.fillStyle = '#ffffff';
+                goCtx.font = 'bold 90px Courier New';
+                goCtx.fillText(`SCORE FINAL: ${score}`, 512, 500);
+                
+                goCtx.fillStyle = '#0f0';
+                goCtx.font = 'bold 60px Courier New';
+                goCtx.fillText("[ DISPARA AQUÍ ]", 512, 750);
+                goCtx.fillText("PARA REINICIAR", 512, 850);
+
+                const goTex = new THREE.CanvasTexture(goCanvas);
+                const goGeo = new THREE.PlaneGeometry(1.5, 1.5);
+                const goMat = new THREE.MeshBasicMaterial({
+                    map: goTex, transparent: true, depthTest: false 
+                });
+                
+                gameOverMesh = new THREE.Mesh(goGeo, goMat);
+                gameOverMesh.renderOrder = 1000; 
+                gameOverMesh.position.set(0, 0, -1.5); // Justo frente a los ojos
+                camera.add(gameOverMesh);
             }
 
             function loadDirectory(path) {
@@ -368,7 +437,7 @@
                             mesh.position.set(x * TILE_SIZE, TILE_SIZE / 2, z * TILE_SIZE);
                             scene.add(mesh);
                             walls.push({ mesh, box: new THREE.Box3().setFromObject(mesh) });
-                            wallMeshes.push(mesh); // Guardar para el Raycaster
+                            wallMeshes.push(mesh); 
                         }
                     }
                 }
@@ -395,9 +464,7 @@
 
             function updateFlowField(targetX, targetZ) {
                 for(let z=0; z<GRID_SIZE; z++) {
-                    for(let x=0; x<GRID_SIZE; x++) {
-                        flowField[z][x] = 9999;
-                    }
+                    for(let x=0; x<GRID_SIZE; x++) { flowField[z][x] = 9999; }
                 }
                 if (targetX < 0 || targetX >= GRID_SIZE || targetZ < 0 || targetZ >= GRID_SIZE) return;
 
@@ -421,9 +488,13 @@
             }
 
             function startGame() {
-                isGameRunning = true; isGameOver = false; health = 100; score = 0; clipAmmo = MAX_CLIP; stamina = 100;
+                if (gameOverMesh) {
+                    camera.remove(gameOverMesh);
+                    gameOverMesh = null;
+                }
                 
-                // CARGAR CANCIÓN
+                isGameRunning = true; isGameOver = false; health = 100; score = 0; clipAmmo = MAX_CLIP; reserveAmmo = 60; stamina = 100;
+                
                 if (!bgm.isPlaying) {
                     const audioLoader = new THREE.AudioLoader();
                     audioLoader.load('soundtrack.mp3', function(buffer) {
@@ -470,7 +541,37 @@
             }
 
             function onTriggerDown() {
-                if (!isGameRunning || isReloading || !rightController) return;
+                if (!rightController) return;
+
+                const matrix = new THREE.Matrix4().extractRotation(rightController.matrixWorld);
+                const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(matrix);
+                const startPos = new THREE.Vector3();
+                
+                // Si el jugador está muerto, se usa el disparo como botón
+                if (isGameOver && gameOverMesh) {
+                    rightController.getWorldPosition(startPos);
+                    
+                    // Láser visual momentáneo rojo para confirmar el disparo a la pantalla
+                    const tempLaser = new THREE.Mesh(
+                        new THREE.CylinderGeometry(0.02, 0.02, 5, 8).rotateX(Math.PI/2),
+                        new THREE.MeshBasicMaterial({ color: 0xff0000 })
+                    );
+                    tempLaser.position.copy(startPos);
+                    tempLaser.lookAt(startPos.clone().add(direction));
+                    scene.add(tempLaser);
+                    setTimeout(() => scene.remove(tempLaser), 150);
+                    playShootSound();
+
+                    // Detectar si impactó el botón de Restart
+                    const ray = new THREE.Raycaster(startPos, direction);
+                    const hits = ray.intersectObject(gameOverMesh);
+                    if (hits.length > 0) {
+                        startGame();
+                    }
+                    return;
+                }
+
+                if (!isGameRunning || isReloading) return;
                 
                 if (clipAmmo <= 0) {
                     isReloading = true; updateHUD("> RECARGANDO...");
@@ -482,13 +583,8 @@
 
                 clipAmmo--; updateHUD();
                 playShootSound();
-
-                const matrix = new THREE.Matrix4().extractRotation(rightController.matrixWorld);
-                const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(matrix);
                 
-                const startPos = new THREE.Vector3();
                 weaponMesh.getWorldPosition(startPos);
-
                 const laser = new THREE.Mesh(
                     new THREE.CylinderGeometry(0.05, 0.05, 1.5, 8).rotateX(Math.PI/2),
                     new THREE.MeshBasicMaterial({ color: weaponColors[weaponTypes[currentWeaponIndex]] })
@@ -521,7 +617,11 @@
             function animate() {
                 const delta = clock.getDelta();
                 const time = clock.getElapsedTime();
-                if (!isGameRunning) { renderer.render(scene, camera); return; }
+                
+                if (!isGameRunning) { 
+                    renderer.render(scene, camera); 
+                    return; 
+                }
 
                 const session = renderer.xr.getSession();
                 if (session) {
@@ -543,27 +643,18 @@
                             if (Math.abs(axY) < 0.2) axY = 0;
 
                             if (source.handedness === 'left') {
-                                
-                                // LOGICA DE STAMINA Y CORRER (Mitad de velocidad anterior: sprint=11, walk=6)
                                 let isSprinting = false;
                                 if (source.gamepad.buttons[0] && source.gamepad.buttons[0].pressed && stamina > 0) {
                                     isSprinting = true;
-                                    stamina -= 35 * delta; // Se cansa
+                                    stamina -= 35 * delta;
                                     if(stamina < 0) stamina = 0;
                                 } else {
-                                    stamina += 20 * delta; // Se recupera
+                                    stamina += 20 * delta; 
                                     if(stamina > MAX_STAMINA) stamina = MAX_STAMINA;
-                                }
-
-                                // Actualizar HUD solo si cambia un entero de la stamina
-                                if (Math.floor(stamina) !== lastStaminaDisplay) {
-                                    lastStaminaDisplay = Math.floor(stamina);
-                                    updateHUD();
                                 }
 
                                 if (axX !== 0 || axY !== 0) {
                                     const moveSpeed = (isSprinting && stamina > 0 ? 11 : 6) * delta;
-                                    
                                     const fwDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
                                     fwDir.y = 0; fwDir.normalize();
                                     const rtDir = new THREE.Vector3().copy(fwDir).cross(camera.up).normalize();
@@ -587,14 +678,20 @@
                     }
                 }
 
-                // Cambiar Niveles
+                // Refresco Dinámico de HUD (Minimapa) 10 veces por segundo
+                if (time - lastHudUpdate > 0.1) {
+                    updateHUD();
+                    lastHudUpdate = time;
+                }
+
+                // Puertas / Cambio Nivel
                 for(let d of doors) {
                     if (playerDolly.position.distanceTo(d.mesh.position) < TILE_SIZE / 1.5) {
                         loadDirectory(d.targetPath); break;
                     }
                 }
 
-                // Láseres (Balas)
+                // Proyectiles
                 for (let i = lasers.length - 1; i >= 0; i--) {
                     let l = lasers[i];
                     l.mesh.position.addScaledVector(l.dir, l.speed * delta);
@@ -608,12 +705,10 @@
                             if (l.box.intersectsBox(e.box)) {
                                 hit = true;
                                 if (l.type === e.type) {
-                                    // INICIA ANIMACIÓN DE MUERTE
                                     e.deathTimer = 1.0;
-                                    e.material.color.setHex(0xff0000); // Se vuelve rojo
+                                    e.material.color.setHex(0xff0000); 
                                     dyingEnemies.push(e);
                                     enemies.splice(j, 1);
-                                    
                                     score++; updateHUD();
                                 } else {
                                     updateHUD("ERROR DE TIPO!");
@@ -627,7 +722,7 @@
                     }
                 }
 
-                // Enemigos Muriendo (Animación)
+                // Enemigos Muriendo
                 for (let i = dyingEnemies.length - 1; i >= 0; i--) {
                     const e = dyingEnemies[i];
                     e.deathTimer -= delta * 2;
@@ -641,7 +736,7 @@
                     }
                 }
 
-                // Actualizar Pathfinding Matrix
+                // Inteligencia Enemiga (Pathfinding)
                 if (time - lastFlowFieldUpdate > 0.3) {
                     let px = Math.floor(playerDolly.position.x / TILE_SIZE);
                     let pz = Math.floor(playerDolly.position.z / TILE_SIZE);
@@ -649,7 +744,6 @@
                     lastFlowFieldUpdate = time;
                 }
 
-                // Movimiento de Enemigos Vivos
                 for (let i = enemies.length - 1; i >= 0; i--) {
                     let e = enemies[i];
                     e.mesh.lookAt(playerDolly.position.x, e.mesh.position.y, playerDolly.position.z);
@@ -658,9 +752,8 @@
                     let distToPlayer = dirToPlayer.length();
                     
                     let dir = new THREE.Vector3();
-                    let hasLOS = false; // Line of Sight
+                    let hasLOS = false; 
 
-                    // Comprobar si hay paredes entre el enemigo y el jugador
                     if (distToPlayer < 30) {
                         let ray = new THREE.Raycaster(e.mesh.position, dirToPlayer.clone().normalize(), 0, distToPlayer);
                         let hits = ray.intersectObjects(wallMeshes);
@@ -668,10 +761,8 @@
                     }
 
                     if (hasLOS) {
-                        // Camino Libre: Ir directo
                         dir.copy(dirToPlayer);
                     } else {
-                        // Atascado o Escondido: Usar laberinto (Flow Field)
                         let ex = Math.floor(e.mesh.position.x / TILE_SIZE);
                         let ez = Math.floor(e.mesh.position.z / TILE_SIZE);
                         
@@ -692,13 +783,12 @@
                         
                         let targetPos = new THREE.Vector3(bestX * TILE_SIZE, e.mesh.position.y, bestZ * TILE_SIZE);
                         dir.subVectors(targetPos, e.mesh.position);
-                        if (dir.length() < 1.0) dir.copy(dirToPlayer); // Prevención de estancamiento perfecto
+                        if (dir.length() < 1.0) dir.copy(dirToPlayer); 
                     }
 
                     dir.y = 0;
                     if (dir.length() > 0) dir.normalize();
 
-                    // Físicas del Enemigo contra Paredes
                     const prevX = e.mesh.position.x;
                     const prevZ = e.mesh.position.z;
 
@@ -710,14 +800,16 @@
                     e.box.setFromObject(e.mesh);
                     if (walls.some(w => e.box.intersectsBox(w.box))) e.mesh.position.z = prevZ;
 
-                    // Daño al Jugador
-                    if (distToPlayer < 3.5) {
-                        health -= 15; updateHUD("¡SISTEMA DAÑADO!");
+                    // Choque / Daño
+                    if (distToPlayer < 3.5 && isGameRunning) {
+                        health -= 15; 
                         
-                        // Muerte del jugador
-                        if (health <= 0) { isGameRunning = false; updateHUD("KERNEL PANIC"); }
+                        if (health <= 0) { 
+                            showGameOverScreen(); 
+                        } else {
+                            updateHUD("¡SISTEMA DAÑADO!");
+                        }
                         
-                        // Alejar enemigo tras golpe
                         e.mesh.position.addScaledVector(dir, -5); 
                     }
                 }
