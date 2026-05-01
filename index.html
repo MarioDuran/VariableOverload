@@ -95,8 +95,8 @@
                     route: '/var/log/string_leak',
                     unlock: 'string',
                     label: 'ARC-STRING',
-                    intro: 'Boss, el heap flotante quedó estable. TecGPT detecta corrupción de cadenas en /var/log/string_leak. Dirígete ahí y purga los strings infectados.',
-                    onUpgrade: 'Pistola de strings sincronizada. Cambia al modo STRING para compilar a balazos esas cadenas corruptas.'
+                    intro: 'Boss, el heap flotante quedó estable. Detecto corrupción de cadenas en /var/log/string_leak. Dirígete ahí y elimina los strings infectados.',
+                    onUpgrade: 'Pistola de strings sincronizada. Cambia al modo STRING para erradicar esas cadenas corruptas.'
                 },
                 {
                     key: 'bool',
@@ -111,9 +111,33 @@
                     route: '/kernel/root_cause',
                     unlock: 'auto',
                     label: 'ARC-AUTO',
-                    intro: 'TecGPT ha identificado la raíz del problema en /kernel/root_cause. Prepárate: ahí convergen todas las variables.',
+                    intro: 'He identificado la raíz del problema en /kernel/root_cause. Prepárate: ahí convergen todas las variables.',
                     onUpgrade: 'Pistola de auto tipado obtenida. Este modo infiere el tipo del objetivo y daña cualquier variable.'
                 }
+            ];
+
+            const TECGPT_VOICE_LINES = [
+                { fileBase: 'voice1', text: 'Boss, te encuentras en el home del servidor.' },
+                { fileBase: 'voice2', text: 'Ha sido infectado por el virus Variable Overload. De momento todo parece manejable porque son puras variables de tipo entero. Utiliza tu pistola ARC para eliminarlas.' },
+                { fileBase: 'voice3', text: 'Mi sistema de conteo de referencias me indica que el virus está en la ruta /home/hacker/payloads/float_heap. Ve y elimina el virus.' },
+                { fileBase: 'voice4', text: 'Detecto firmas de tipo FLOAT en esta sala. Hay un upgrade ARC-FLOAT cerca: recógelo antes de aguantar la oleada.' },
+                { fileBase: 'voice5', text: 'Upgrade ARC-FLOAT instalado. Ahora puedes cambiar el modo de la pistola ARC y eliminar variables flotantes.' },
+                { fileBase: 'voice6', text: 'Boss, el heap flotante quedó estable. Detecto corrupción de cadenas en /var/log/string_leak. Dirígete ahí y elimina los strings infectados.' },
+                { fileBase: 'voice7', text: 'Detecto firmas de tipo STRING en esta sala. Hay un upgrade ARC-STRING cerca: recógelo antes de aguantar la oleada.' },
+                { fileBase: 'voice8', text: 'Pistola de strings sincronizada. Cambia al modo STRING para erradicar esas cadenas corruptas.' },
+                { fileBase: 'voice9', text: 'Los strings dejaron de mutar. Ahora hay flags booleanas alterando permisos en /etc/flags/boolean_gate. Neutralízalas.' },
+                { fileBase: 'voice10', text: 'Detecto firmas de tipo BOOL en esta sala. Hay un upgrade ARC-BOOL cerca: recógelo antes de aguantar la oleada.' },
+                { fileBase: 'voice11', text: 'Módulo booleano cargado. El modo BOOL puede eliminar true y false infectados.' },
+                { fileBase: 'voice12', text: 'He identificado la raíz del problema en /kernel/root_cause. Prepárate: ahí convergen todas las variables.' },
+                { fileBase: 'voice13', text: 'Detecto firmas de tipo AUTO en esta sala. Hay un upgrade ARC-AUTO cerca: recógelo antes de aguantar la oleada.' },
+                { fileBase: 'voice14', text: 'Pistola de auto tipado obtenida. Este modo infiere el tipo del objetivo y daña cualquier variable.' },
+                { fileBase: 'voice15', text: 'La horda principal cayó, Boss. Ahora apareció el proceso raíz: Variable Overload. Tiene muchas referencias vivas y declarará más variables. Usa auto tipado.' },
+                { fileBase: 'voice16', text: 'El virus invocó más variables. Mantén auto tipado activo y controla la horda.' },
+                { fileBase: 'voice17', text: 'El virus ha sido eliminado. Variable Overload ha sido purgado del servidor. Buen trabajo, Boss.' },
+                { fileBase: 'voice18', text: 'Puerta bloqueada. Limpia la oleada de esta habitación para desbloquear el directorio.' },
+                { fileBase: 'voice19', text: 'Ruta no autorizada todavía. Sigue la ruta sugerida para eliminar el virus.' },
+                { fileBase: 'voice20', text: 'Detecté recursos libres en esta habitación. Revisa el minimapa: aparecen como puntos verdes.' },
+                { fileBase: 'voice21', text: 'Directorio limpio. Las puertas vuelven a estar disponibles.' }
             ];
 
             const allWeaponTypes = ['int', 'float', 'string', 'bool', 'auto'];
@@ -201,7 +225,7 @@
             // --- HUD VR ---
             const hudCanvas = document.createElement('canvas');
             hudCanvas.width = 1280;
-            hudCanvas.height = 420;
+            hudCanvas.height = 320;
             const vrHudCtx = hudCanvas.getContext('2d');
             const vrHudTex = new THREE.CanvasTexture(hudCanvas);
             let vrHudMesh;
@@ -220,6 +244,7 @@
             let audioCtx;
             let listener;
             let bgm;
+            let currentTecGPTAudio = null;
 
             init();
 
@@ -243,7 +268,6 @@
                 const vrButton = VRButton.createButton(renderer);
                 vrButton.addEventListener('click', () => {
                     document.getElementById('info').style.display = 'none';
-                    unlockWebAudioAndSpeech();
                     if (!isGameRunning) startGame();
                 });
                 document.body.appendChild(vrButton);
@@ -261,11 +285,11 @@
                 bgm = new THREE.Audio(listener);
 
                 // HUD superior/inferior del visor.
-                const hudGeo = new THREE.PlaneGeometry(1.9, 0.62);
-                const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, depthTest: false, opacity: 0.82 });
+                const hudGeo = new THREE.PlaneGeometry(1.9, 0.48);
+                const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, depthTest: false });
                 vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
                 vrHudMesh.renderOrder = 999;
-                vrHudMesh.position.set(0, 0.05, -1.25);
+                vrHudMesh.position.set(0, 0.18, -1.25);
                 vrHudMesh.rotation.x = -0.05;
                 camera.add(vrHudMesh);
 
@@ -295,7 +319,6 @@
                         rightWeaponMesh = createGunMesh();
                         rightController.add(rightWeaponMesh);
                         rightController.addEventListener('selectstart', () => {
-                            unlockWebAudioAndSpeech();
                             rightController.userData.isSelecting = true;
                             fireWeapon(rightController, rightWeaponMesh);
                         });
@@ -305,7 +328,6 @@
                         leftWeaponMesh = createGunMesh();
                         leftController.add(leftWeaponMesh);
                         leftController.addEventListener('selectstart', () => {
-                            unlockWebAudioAndSpeech();
                             leftController.userData.isSelecting = true;
                             fireWeapon(leftController, leftWeaponMesh);
                         });
@@ -357,7 +379,6 @@
                 stamina = MAX_STAMINA;
                 isReloading = false;
                 rapidFireUntil = 0;
-                unlockWebAudioAndSpeech();
                 unlockedWeapons = ['int'];
                 currentWeaponIndex = 0;
                 missionIndex = 0;
@@ -391,7 +412,8 @@
                 notificationQueue.push({
                     text,
                     speak,
-                    duration: duration || Math.min(12, Math.max(5.5, text.length / 24))
+                    duration: duration || Math.min(14, Math.max(5.8, text.length / 18)),
+                    lastTypedChars: -1
                 });
                 if (!activeNotification) startNextNotification();
             }
@@ -406,122 +428,85 @@
                     return;
                 }
 
-                drawNotification(activeNotification.text);
+                activeNotification.lastTypedChars = -1;
+                drawNotification(activeNotification.text, 0);
                 if (activeNotification.speak) speakTecGPT(activeNotification.text);
             }
 
-            function cleanTecGPTText(text) {
+            function normalizeTecGPTLine(text) {
                 return String(text || '')
                     .replace(/^TecGPT\s*[:\-\/]*\s*/i, '')
+                    .replace(/[“”]/g, '"')
                     .replace(/\s+/g, ' ')
-                    .trim();
+                    .trim()
+                    .toLowerCase();
             }
 
-            function unlockWebAudioAndSpeech() {
+            function findTecGPTVoiceLine(text) {
+                const normalized = normalizeTecGPTLine(text);
+                return TECGPT_VOICE_LINES.find(line => normalizeTecGPTLine(line.text) === normalized) || null;
+            }
+
+            function primeTecGPTVoice() {
                 ensureAudioContext();
-                primeSpeechSynth();
-            }
-
-            function primeSpeechSynth() {
-                if (!('speechSynthesis' in window)) return;
-                window.speechSynthesis.resume();
-                window.speechSynthesis.getVoices();
-                if (typeof window.speechSynthesis.onvoiceschanged !== 'function') {
-                    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
-                }
-            }
-
-            function getTecGPTVoice() {
-                if (!('speechSynthesis' in window)) return null;
-                const voices = window.speechSynthesis.getVoices();
-                return voices.find(v => /es[-_]?MX/i.test(v.lang))
-                    || voices.find(v => /^es/i.test(v.lang))
-                    || voices.find(v => /spanish|español/i.test(v.name))
-                    || voices[0]
-                    || null;
             }
 
             function speakTecGPT(text) {
-                const clean = cleanTecGPTText(text);
-                unlockWebAudioAndSpeech();
+                const line = findTecGPTVoiceLine(text);
+                if (!line) return;
+                playTecGPTAudioFile(line.fileBase);
+            }
 
-                // Web Speech API: se intenta leer con la voz local del navegador.
-                if ('speechSynthesis' in window) {
-                    const utterance = new SpeechSynthesisUtterance(clean);
-                    utterance.lang = 'es-MX';
-                    utterance.rate = 1.02;
-                    utterance.pitch = 0.94;
-                    utterance.volume = 1.0;
-                    const voice = getTecGPTVoice();
-                    if (voice) utterance.voice = voice;
-
-                    window.speechSynthesis.cancel();
-                    window.speechSynthesis.resume();
-                    setTimeout(() => {
-                        window.speechSynthesis.resume();
-                        window.speechSynthesis.speak(utterance);
-                    }, 60);
+            function playTecGPTAudioFile(fileBase) {
+                const candidates = [`${fileBase}.m4a`, `${fileBase}.mp3`];
+                if (currentTecGPTAudio) {
+                    try {
+                        currentTecGPTAudio.pause();
+                        currentTecGPTAudio.currentTime = 0;
+                    } catch (err) {}
                 }
 
-                // Fallback audible en WebXR: algunos visores no enrutan speechSynthesis al casco.
-                // Este sintetizador robótico usa WebAudio, por eso sí sale por el audio de VR.
-                playTecGPTRobotVoice(clean);
+                const tryCandidate = (index) => {
+                    if (index >= candidates.length) return;
+                    const audio = new Audio(candidates[index]);
+                    let failed = false;
+                    currentTecGPTAudio = audio;
+                    audio.preload = 'auto';
+                    audio.volume = 1.0;
+
+                    const failOver = () => {
+                        if (failed) return;
+                        failed = true;
+                        if (currentTecGPTAudio === audio) tryCandidate(index + 1);
+                    };
+
+                    audio.addEventListener('error', failOver, { once: true });
+                    const playPromise = audio.play();
+                    if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(failOver);
+                };
+
+                tryCandidate(0);
             }
 
-            function playTecGPTRobotVoice(text) {
-                ensureAudioContext();
-                const chars = cleanTecGPTText(text).slice(0, 180).replace(/[\s,.;:]+/g, ' ').split('');
-                let t = audioCtx.currentTime + 0.04;
-                const master = audioCtx.createGain();
-                master.gain.setValueAtTime(0.0001, t);
-                master.gain.linearRampToValueAtTime(0.055, t + 0.03);
-                master.gain.setValueAtTime(0.055, t + Math.min(4, chars.length * 0.045));
-                master.gain.linearRampToValueAtTime(0.0001, t + Math.min(4.2, chars.length * 0.045 + 0.25));
-                master.connect(audioCtx.destination);
-
-                chars.forEach((ch, index) => {
-                    if (ch === ' ') {
-                        t += 0.055;
-                        return;
-                    }
-                    const code = ch.toLowerCase().charCodeAt(0) || 97;
-                    const dur = 0.032 + ((code % 5) * 0.004);
-                    const freq = 170 + (code % 19) * 14;
-
-                    const osc = audioCtx.createOscillator();
-                    const gain = audioCtx.createGain();
-                    osc.type = index % 3 === 0 ? 'sawtooth' : 'square';
-                    osc.frequency.setValueAtTime(freq, t);
-                    osc.frequency.linearRampToValueAtTime(freq * 1.18, t + dur);
-                    gain.gain.setValueAtTime(0.0001, t);
-                    gain.gain.linearRampToValueAtTime(0.09, t + 0.006);
-                    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-                    osc.connect(gain);
-                    gain.connect(master);
-                    osc.start(t);
-                    osc.stop(t + dur + 0.02);
-                    t += dur + 0.012;
-                });
-            }
-
-            function drawNotification(text) {
+            function drawNotification(text, visibleChars = Infinity) {
                 notificationCtx.clearRect(0, 0, notificationCanvas.width, notificationCanvas.height);
                 if (!text) {
                     notificationTex.needsUpdate = true;
                     return;
                 }
 
-                const clean = cleanTecGPTText(text);
                 notificationCtx.fillStyle = 'rgba(0, 20, 10, 0.54)';
                 roundRect(notificationCtx, 24, 34, 1152, 174, 28, true, false);
                 notificationCtx.strokeStyle = 'rgba(0, 255, 170, 0.58)';
                 notificationCtx.lineWidth = 6;
                 roundRect(notificationCtx, 24, 34, 1152, 174, 28, false, true);
 
+                const displayText = `TecGPT: "${text}"`;
+                const typedText = displayText.slice(0, Math.max(0, Math.min(displayText.length, visibleChars)));
                 notificationCtx.fillStyle = 'rgba(234, 255, 255, 0.86)';
                 notificationCtx.font = 'bold 34px Courier New';
                 notificationCtx.textAlign = 'left';
-                wrapText(notificationCtx, `TecGPT: "${clean}"`, 58, 94, 1085, 42);
+                wrapText(notificationCtx, typedText, 58, 94, 1085, 42);
                 notificationTex.needsUpdate = true;
             }
 
@@ -542,6 +527,13 @@
                     const t = (elapsed - (duration - 0.45)) / 0.45;
                     y = THREE.MathUtils.lerp(-0.44, -0.82, easeOutCubic(t));
                     alpha = 1 - t;
+                }
+
+                const displayLength = `TecGPT: "${activeNotification.text}"`.length;
+                const typedChars = Math.min(displayLength, Math.floor(elapsed * 42));
+                if (typedChars !== activeNotification.lastTypedChars) {
+                    activeNotification.lastTypedChars = typedChars;
+                    drawNotification(activeNotification.text, typedChars);
                 }
 
                 notificationMesh.position.y = y;
@@ -593,63 +585,44 @@
 
                 const currentWeapon = unlockedWeapons[currentWeaponIndex] || 'int';
                 const colorHex = '#' + weaponColors[currentWeapon].toString(16).padStart(6, '0');
-                const now = clock.getElapsedTime();
 
-                // Barras superiores: salud y stamina sin texto.
-                const barWidth = 420;
-                const barHeight = 18;
-                const barX = hudCanvas.width / 2 - barWidth / 2;
-                const hpY = 24;
-                const staminaY = 52;
-
-                vrHudCtx.fillStyle = 'rgba(0, 40, 0, 0.34)';
-                vrHudCtx.fillRect(barX, hpY, barWidth, barHeight);
-                vrHudCtx.fillStyle = 'rgba(255, 40, 40, 0.78)';
-                vrHudCtx.fillRect(barX, hpY, barWidth * THREE.MathUtils.clamp(health / 100, 0, 1), barHeight);
-                vrHudCtx.strokeStyle = 'rgba(255,255,255,0.38)';
-                vrHudCtx.lineWidth = 2;
-                vrHudCtx.strokeRect(barX, hpY, barWidth, barHeight);
-
-                vrHudCtx.fillStyle = 'rgba(0, 40, 0, 0.34)';
-                vrHudCtx.fillRect(barX, staminaY, barWidth, barHeight);
-                vrHudCtx.fillStyle = stamina > 20 ? 'rgba(0, 255, 120, 0.76)' : 'rgba(255, 80, 40, 0.76)';
-                vrHudCtx.fillRect(barX, staminaY, barWidth * THREE.MathUtils.clamp(stamina / MAX_STAMINA, 0, 1), barHeight);
-                vrHudCtx.strokeStyle = 'rgba(255,255,255,0.32)';
-                vrHudCtx.strokeRect(barX, staminaY, barWidth, barHeight);
-
-                // Directorio actual y contador de enemigos debajo de las barras.
-                const remaining = getRemainingEnemiesInRoom();
-                const roomState = getRoomState(currentPath);
-                vrHudCtx.textAlign = 'center';
-                vrHudCtx.fillStyle = 'rgba(0, 255, 170, 0.82)';
-                vrHudCtx.font = 'bold 28px Courier New';
-                vrHudCtx.fillText(`${currentPath}`, hudCanvas.width / 2, 104);
-                vrHudCtx.font = 'bold 22px Courier New';
-                vrHudCtx.fillStyle = roomState.cleared ? 'rgba(0,255,170,0.66)' : 'rgba(255,170,0,0.72)';
-                vrHudCtx.fillText(`ENEMIGOS: ${remaining}`, hudCanvas.width / 2, 134);
-
-                // Arma y munición abajo a la izquierda.
                 vrHudCtx.textAlign = 'left';
                 vrHudCtx.fillStyle = colorHex;
-                vrHudCtx.globalAlpha = 0.84;
-                vrHudCtx.font = 'bold 34px Courier New';
-                vrHudCtx.fillText(weaponNames[currentWeapon], 28, hudCanvas.height - 86);
-                vrHudCtx.fillStyle = 'rgba(0, 255, 255, 0.78)';
-                vrHudCtx.font = 'bold 28px Courier New';
-                vrHudCtx.fillText(`${clipAmmo}/${reserveAmmo}`, 28, hudCanvas.height - 48);
+                vrHudCtx.font = 'bold 40px Courier New';
+                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 24, 44);
 
-                if (now < rapidFireUntil) {
-                    vrHudCtx.fillStyle = 'rgba(255,255,255,0.76)';
-                    vrHudCtx.font = 'bold 22px Courier New';
-                    vrHudCtx.fillText('RAPID FIRE', 28, hudCanvas.height - 18);
+                vrHudCtx.fillStyle = '#0ff';
+                vrHudCtx.font = 'bold 30px Courier New';
+                vrHudCtx.fillText(`AMMO: ${clipAmmo}/${reserveAmmo}`, 24, 88);
+
+                if (clock.getElapsedTime() < rapidFireUntil) {
+                    vrHudCtx.fillStyle = '#ffffff';
+                    vrHudCtx.fillText('RAPID FIRE', 24, 130);
                 }
-                vrHudCtx.globalAlpha = 1;
+
+                vrHudCtx.textAlign = 'center';
+                vrHudCtx.fillStyle = '#0f0';
+                vrHudCtx.font = 'bold 36px Courier New';
+                vrHudCtx.fillText(`HP: ${Math.max(0, Math.floor(health))}%  |  KILLS: ${score}`, 640, 44);
+
+                const barWidth = 360;
+                const barX = 640 - (barWidth / 2);
+                vrHudCtx.fillStyle = '#004400';
+                vrHudCtx.fillRect(barX, 64, barWidth, 16);
+                vrHudCtx.fillStyle = stamina > 20 ? '#0f0' : '#ff0000';
+                vrHudCtx.fillRect(barX, 64, (stamina / MAX_STAMINA) * barWidth, 16);
+
+                const remaining = getRemainingEnemiesInRoom();
+                vrHudCtx.fillStyle = activeWave ? '#ffaa00' : '#00ffaa';
+                vrHudCtx.font = 'bold 30px Courier New';
+                const roomState = getRoomState(currentPath);
+                const lockText = roomState.cleared ? 'PUERTAS ABIERTAS' : 'PUERTAS BLOQUEADAS';
+                vrHudCtx.fillText(`ROOM: ${currentPath}  |  ENEMIGOS: ${remaining}  |  ${lockText}`, 640, 120);
 
                 if (message) {
-                    vrHudCtx.textAlign = 'center';
-                    vrHudCtx.fillStyle = 'rgba(255, 180, 0, 0.78)';
-                    vrHudCtx.font = 'bold 24px Courier New';
-                    vrHudCtx.fillText(message, hudCanvas.width / 2, 170);
+                    vrHudCtx.fillStyle = '#ffaa00';
+                    vrHudCtx.font = 'bold 28px Courier New';
+                    vrHudCtx.fillText(message, 640, 160);
                 }
 
                 drawMinimap();
@@ -657,41 +630,41 @@
             }
 
             function drawMinimap() {
-                const mapSize = 176;
-                const offsetX = hudCanvas.width - mapSize - 28;
-                const offsetY = hudCanvas.height - mapSize - 24;
+                const mapSize = 190;
+                const offsetX = hudCanvas.width - mapSize - 26;
+                const offsetY = 16;
                 const cellW = mapSize / GRID_SIZE;
                 const cellH = mapSize / GRID_SIZE;
 
-                vrHudCtx.fillStyle = 'rgba(0, 10, 0, 0.46)';
+                vrHudCtx.fillStyle = 'rgba(0, 10, 0, 0.72)';
                 vrHudCtx.fillRect(offsetX, offsetY, mapSize, mapSize);
-                vrHudCtx.strokeStyle = 'rgba(0,255,0,0.50)';
+                vrHudCtx.strokeStyle = '#0f0';
                 vrHudCtx.lineWidth = 2;
                 vrHudCtx.strokeRect(offsetX, offsetY, mapSize, mapSize);
 
                 for (let z = 0; z < GRID_SIZE; z++) {
                     for (let x = 0; x < GRID_SIZE; x++) {
                         if (mapGrid[z] && mapGrid[z][x] === 1) {
-                            vrHudCtx.fillStyle = 'rgba(0, 120, 0, 0.45)';
+                            vrHudCtx.fillStyle = '#005500';
                             vrHudCtx.fillRect(offsetX + x * cellW, offsetY + z * cellH, cellW + 1, cellH + 1);
                         } else if (mapGrid[z] && mapGrid[z][x] === 2) {
-                            vrHudCtx.fillStyle = 'rgba(255,255,0,0.56)';
+                            vrHudCtx.fillStyle = '#aaaa00';
                             vrHudCtx.fillRect(offsetX + x * cellW, offsetY + z * cellH, cellW, cellH);
                         }
                     }
                 }
 
-                vrHudCtx.fillStyle = 'rgba(255,255,255,0.90)';
+                vrHudCtx.fillStyle = '#ffffff';
                 vrHudCtx.beginPath();
                 vrHudCtx.arc(offsetX + (playerDolly.position.x / TILE_SIZE) * cellW, offsetY + (playerDolly.position.z / TILE_SIZE) * cellH, 4.5, 0, Math.PI * 2);
                 vrHudCtx.fill();
 
-                vrHudCtx.fillStyle = 'rgba(255,0,0,0.82)';
+                vrHudCtx.fillStyle = '#ff0000';
                 enemies.forEach(e => {
                     vrHudCtx.fillRect(offsetX + (e.mesh.position.x / TILE_SIZE) * cellW - 3, offsetY + (e.mesh.position.z / TILE_SIZE) * cellH - 3, 6, 6);
                 });
 
-                vrHudCtx.fillStyle = 'rgba(0,255,255,0.82)';
+                vrHudCtx.fillStyle = '#00ff00';
                 pickups.forEach(p => {
                     vrHudCtx.fillRect(offsetX + (p.mesh.position.x / TILE_SIZE) * cellW - 2, offsetY + (p.mesh.position.z / TILE_SIZE) * cellH - 2, 4, 4);
                 });
@@ -926,13 +899,7 @@
 
             // --- OLEADAS ---
             function startRoomWave(path) {
-                const rawConfig = getWaveConfig(path);
-                const config = {
-                    ...rawConfig,
-                    total: Math.ceil(rawConfig.total * 2),
-                    maxAlive: Math.ceil(rawConfig.maxAlive * 1.65),
-                    spawnRate: Math.max(0.42, rawConfig.spawnRate * 0.85)
-                };
+                const config = getWaveConfig(path);
                 const now = clock.getElapsedTime();
                 activeWave = {
                     total: config.total,
@@ -955,7 +922,7 @@
 
                 if (path === '/') {
                     return {
-                        total: 6,
+                        total: 12,
                         types: ['int'],
                         spawnRate: 1.25,
                         maxAlive: 3,
@@ -968,7 +935,7 @@
                 if (currentMission && path === currentMission.route) {
                     if (currentMission.unlock === 'auto') {
                         return {
-                            total: 22,
+                            total: 44,
                             types: ['int', 'float', 'string', 'bool'],
                             spawnRate: 0.75,
                             maxAlive: 7,
@@ -979,7 +946,7 @@
                         };
                     }
                     return {
-                        total: 10 + missionIndex * 5,
+                        total: (10 + missionIndex * 5) * 2,
                         types: [currentMission.unlock],
                         spawnRate: Math.max(0.62, 1.0 - missionIndex * 0.1),
                         maxAlive: 4 + missionIndex,
@@ -992,7 +959,7 @@
 
                 if (missionIndex === 0) {
                     return {
-                        total: 6 + depth * 2,
+                        total: (6 + depth * 2) * 2,
                         types: ['int'],
                         spawnRate: 1.05,
                         maxAlive: 3 + Math.min(2, depth),
@@ -1004,7 +971,7 @@
 
                 if (missionIndex === 1) {
                     return {
-                        total: 7 + depth * 2,
+                        total: (7 + depth * 2) * 2,
                         types: ['int', 'float'],
                         spawnRate: 0.95,
                         maxAlive: 4,
@@ -1016,7 +983,7 @@
 
                 if (missionIndex === 2) {
                     return {
-                        total: 8 + depth * 2,
+                        total: (8 + depth * 2) * 2,
                         types: ['int', 'float', 'string'],
                         spawnRate: 0.88,
                         maxAlive: 5,
@@ -1027,7 +994,7 @@
                 }
 
                 return {
-                    total: 10 + depth * 2,
+                    total: (10 + depth * 2) * 2,
                     types: ['int', 'float', 'string', 'bool'],
                     spawnRate: 0.80,
                     maxAlive: 6,
@@ -1051,7 +1018,7 @@
                     if (activeWave.config.finalHorde && !finalBossSpawned) {
                         activeWave = null;
                         updateHUD('RAÍZ DEL PROBLEMA DETECTADA');
-                        notifyTecGPT('La horda principal cayó, Boss. Ahora apareció el proceso raíz: Variable Overload. Tiene muchas referencias vivas e invocará más variables. Usa auto tipado.');
+                        notifyTecGPT('La horda principal cayó, Boss. Ahora apareció el proceso raíz: Variable Overload. Tiene muchas referencias vivas y declarará más variables. Usa auto tipado.');
                         spawnBoss();
                     } else {
                         clearCurrentRoom();
@@ -1067,7 +1034,7 @@
                 pendingWaveAfterUpgrade = false;
                 updateDoorLockStates();
                 updateHUD('HABITACIÓN LIMPIA');
-                notifyTecGPT(`Directorio ${currentPath} limpio. Las puertas vuelven a estar disponibles.`);
+                notifyTecGPT('Directorio limpio. Las puertas vuelven a estar disponibles.');
 
                 const mission = missions[missionIndex];
                 if (mission && currentPath === mission.route && mission.unlock !== 'auto') {
@@ -1078,32 +1045,106 @@
                 }
             }
 
+            function createEnemyTexture(enemy, flash = false) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 256;
+                canvas.height = 256;
+                const ctx = canvas.getContext('2d');
+                const color = weaponColors[enemy.type] || 0xff0000;
+                const colorCss = '#' + color.toString(16).padStart(6, '0');
+
+                ctx.fillStyle = enemy.previewFloat ? '#001a1a' : '#001100';
+                ctx.fillRect(0, 0, 256, 256);
+                if (flash) {
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.72)';
+                    ctx.fillRect(0, 0, 256, 256);
+                }
+
+                ctx.strokeStyle = flash ? '#ff3333' : colorCss;
+                ctx.lineWidth = 10;
+                ctx.strokeRect(0, 0, 256, 256);
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                const hpText = formatEnemyHp(enemy);
+                if (enemy.type === 'int' || enemy.type === 'float') {
+                    ctx.fillStyle = flash ? '#ffffff' : colorCss;
+                    ctx.font = enemy.type === 'float' ? 'bold 64px Courier New' : 'bold 76px Courier New';
+                    ctx.fillText(hpText, 128, 120);
+                    ctx.font = 'bold 24px Courier New';
+                    ctx.fillText(enemy.type.toUpperCase(), 128, 190);
+                } else {
+                    ctx.fillStyle = flash ? '#ffffff' : colorCss;
+                    ctx.font = enemy.label.length > 6 ? 'bold 34px Courier New' : 'bold 46px Courier New';
+                    ctx.fillText(enemy.label, 128, 95);
+                    ctx.font = 'bold 34px Courier New';
+                    ctx.fillText(`HP ${hpText}`, 128, 155);
+                }
+
+                if (enemy.floating) {
+                    ctx.font = 'bold 22px Courier New';
+                    ctx.fillStyle = flash ? '#ffffff' : colorCss;
+                    ctx.fillText('FLOATING', 128, 222);
+                }
+
+                return new THREE.CanvasTexture(canvas);
+            }
+
+            function formatEnemyHp(enemy) {
+                if (enemy.type === 'float') return Math.max(0, enemy.hp).toFixed(1);
+                return String(Math.max(0, Math.ceil(enemy.hp)));
+            }
+
+            function makeEnemyHp(type, difficulty, previewFloat = false) {
+                const diff = Math.max(1, difficulty || 1);
+                if (type === 'float') {
+                    return Number((1 + (diff - 1) * 0.75 + Math.random() * (0.45 + diff * 0.16)).toFixed(1));
+                }
+                if (type === 'int') {
+                    return Math.max(1, Math.round(1 + (diff - 1) * 1.25 + Math.random() * Math.max(0.35, diff * 0.75)));
+                }
+                if (type === 'bool') return Math.max(1, Math.round(1 + (diff - 1) * 1.1 + Math.random() * 1.2));
+                if (type === 'string') return Math.max(2, Math.round(2 + (diff - 1) * 1.4 + Math.random() * 1.8));
+                return Math.max(1, Math.round(diff));
+            }
+
+            function refreshEnemyTexture(enemy, flash = false) {
+                if (!enemy || !enemy.material || enemy.isBoss) return;
+                const oldMap = enemy.material.map;
+                enemy.material.map = createEnemyTexture(enemy, flash);
+                enemy.material.needsUpdate = true;
+                if (oldMap && oldMap.dispose) oldMap.dispose();
+            }
+
             function spawnEnemy(config, forcedType = null, forcedPosition = null) {
                 const type = forcedType || choose(config.types);
                 const floating = Math.random() < (config.floatingChance || 0) || type === 'float';
                 const previewFloat = config.previewFloat && floating;
-                const actualType = previewFloat ? 'float' : type;
+                const actualType = previewFloat ? 'int' : type;
+                const label = actualType === 'string'
+                    ? choose(typeLabels.string)
+                    : actualType === 'bool'
+                        ? choose(typeLabels.bool)
+                        : actualType.toUpperCase();
 
                 const spot = forcedPosition || getRandomSpawnSpot();
                 if (!spot) return;
 
-                const hp = rollEnemyHp(actualType, config.difficulty || 1, previewFloat);
-                const maxHp = hp;
-                const texture = makeEnemyTexture(actualType, hp, maxHp, floating, false, false);
-                const material = new THREE.MeshBasicMaterial({ map: texture, color: 0xffffff });
+                const hp = makeEnemyHp(actualType, config.difficulty || 1, previewFloat);
+                const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
                 const size = actualType === 'string' ? 3.6 : 3.1;
                 const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), material);
                 const y = floating ? 3.3 + Math.random() * 1.2 : 1.55;
                 mesh.position.set(spot.x * TILE_SIZE, y, spot.z * TILE_SIZE);
-                scene.add(mesh);
 
-                enemies.push({
+                const enemy = {
                     mesh,
                     material,
                     type: actualType,
-                    label: `${actualType}:${formatEnemyHp(actualType, hp)}`,
+                    label,
                     hp,
-                    maxHp,
+                    maxHp: hp,
                     floating,
                     previewFloat,
                     bobOffset: Math.random() * Math.PI * 2,
@@ -1112,7 +1153,12 @@
                     attackCooldown: 0,
                     spawnAddsCooldown: 0,
                     isBoss: false
-                });
+                };
+
+                material.map = createEnemyTexture(enemy);
+                material.needsUpdate = true;
+                scene.add(mesh);
+                enemies.push(enemy);
             }
 
             function spawnBoss() {
@@ -1136,7 +1182,7 @@
                 ctx.font = 'bold 32px Courier New';
                 ctx.fillText('ROOT PROCESS', 256, 366);
 
-                const material = new THREE.MeshBasicMaterial({ map: makeEnemyTexture('boss', 120, 120, true, false, true), color: 0xffffff });
+                const material = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), color: 0xffffff });
                 const mesh = new THREE.Mesh(new THREE.BoxGeometry(7, 7, 7), material);
                 mesh.position.set(spot.x * TILE_SIZE, 4.2, spot.z * TILE_SIZE);
                 scene.add(mesh);
@@ -1177,69 +1223,6 @@
                 return arr[Math.floor(Math.random() * arr.length)];
             }
 
-            function formatEnemyHp(type, hp) {
-                const value = Math.max(0, hp);
-                if (type === 'boss') return String(Math.ceil(value));
-                if (type === 'int' || type === 'bool') return value >= 10 ? String(Math.ceil(value)) : value.toFixed(1);
-                return value >= 10 ? value.toFixed(1) : value.toFixed(2);
-            }
-
-            function rollEnemyHp(type, difficulty, previewFloat = false) {
-                const jitter = THREE.MathUtils.randFloat(0.88, 1.24);
-                let hp;
-                if (type === 'int') {
-                    hp = THREE.MathUtils.randFloat(0.95, 1.35) + Math.max(0, difficulty - 1) * 0.55;
-                } else if (type === 'float') {
-                    hp = THREE.MathUtils.randFloat(1.05, 1.55) + Math.max(0, difficulty - 1) * 0.72;
-                    if (previewFloat) hp += 0.35;
-                } else if (type === 'string') {
-                    hp = THREE.MathUtils.randFloat(1.25, 1.85) + Math.max(0, difficulty - 1) * 0.66;
-                } else if (type === 'bool') {
-                    hp = THREE.MathUtils.randFloat(1.05, 1.55) + Math.max(0, difficulty - 1) * 0.52;
-                } else {
-                    hp = THREE.MathUtils.randFloat(1.0, 1.6) * jitter;
-                }
-                return Math.max(0.5, Math.round(hp * jitter * 10) / 10);
-            }
-
-            function makeEnemyTexture(type, hp, maxHp, floating = false, flash = false, isBoss = false) {
-                const canvas = document.createElement('canvas');
-                canvas.width = 256;
-                canvas.height = 256;
-                const ctx = canvas.getContext('2d');
-                const color = isBoss ? 0xff3333 : (weaponColors[type] || 0xff0000);
-                const colorCss = '#' + color.toString(16).padStart(6, '0');
-                ctx.fillStyle = flash ? '#330000' : (floating ? '#001a1a' : '#001100');
-                ctx.fillRect(0, 0, 256, 256);
-                ctx.strokeStyle = flash ? '#ff2222' : colorCss;
-                ctx.lineWidth = 12;
-                ctx.strokeRect(0, 0, 256, 256);
-
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillStyle = flash ? '#ff6666' : colorCss;
-                ctx.font = isBoss ? 'bold 50px Courier New' : 'bold 68px Courier New';
-                ctx.fillText(formatEnemyHp(type, hp), 128, isBoss ? 112 : 108);
-
-                ctx.font = 'bold 24px Courier New';
-                ctx.fillStyle = 'rgba(230,255,230,0.86)';
-                ctx.fillText(isBoss ? 'OVERLOAD' : type.toUpperCase(), 128, 170);
-                if (floating && !isBoss) {
-                    ctx.font = 'bold 20px Courier New';
-                    ctx.fillStyle = 'rgba(0,255,255,0.82)';
-                    ctx.fillText('FLOAT', 128, 204);
-                }
-                return new THREE.CanvasTexture(canvas);
-            }
-
-            function refreshEnemyTexture(enemy, flash = false) {
-                if (!enemy || !enemy.material) return;
-                const oldMap = enemy.material.map;
-                enemy.material.map = makeEnemyTexture(enemy.type, enemy.hp, enemy.maxHp, enemy.floating, flash, enemy.isBoss);
-                enemy.material.needsUpdate = true;
-                if (oldMap) oldMap.dispose();
-            }
-
             // --- PICKUPS / DROPS ---
             function spawnWeaponUpgrade(type) {
                 const cx = Math.floor(GRID_SIZE / 2);
@@ -1248,20 +1231,19 @@
             }
 
             function maybeDropPickup(position) {
+                position.y = 1.1;
                 const roll = Math.random();
-                const dropPosition = position.clone();
-                const fallToGround = dropPosition.y > 1.25;
-                if (roll < 0.42) spawnPickup('ammo', dropPosition, null, { fallToGround });
-                else if (roll < 0.62) spawnPickup('health', dropPosition, null, { fallToGround });
-                else if (roll < 0.74) spawnPickup('rapid', dropPosition, null, { fallToGround });
+                if (roll < 0.42) spawnPickup('ammo', position, null);
+                else if (roll < 0.62) spawnPickup('health', position, null);
+                else if (roll < 0.74) spawnPickup('rapid', position, null);
             }
 
             function spawnRandomSupply() {
                 const spot = getRandomOpenSpotNearCenter();
                 if (!spot) return;
                 const type = Math.random() < 0.75 ? 'ammo' : (Math.random() < 0.6 ? 'health' : 'rapid');
-                spawnPickup(type, new THREE.Vector3(spot.x * TILE_SIZE, 0.9, spot.z * TILE_SIZE), null);
-                notifyTecGPT('Detecté recursos libres en esta habitación. Revisa el minimapa: aparecen como puntos cyan.');
+                spawnPickup(type, new THREE.Vector3(spot.x * TILE_SIZE, 1.1, spot.z * TILE_SIZE), null);
+                notifyTecGPT('Detecté recursos libres en esta habitación. Revisa el minimapa: aparecen como puntos verdes.');
             }
 
             function getRandomOpenSpotNearCenter() {
@@ -1274,45 +1256,29 @@
                 return candidates.length ? choose(candidates) : null;
             }
 
-            function spawnPickup(kind, position, payload, options = {}) {
+            function spawnPickup(kind, position, payload) {
                 const group = new THREE.Group();
-                const color = kind === 'ammo' ? 0x00ffff : kind === 'health' ? 0xff3333 : kind === 'rapid' ? 0xffffff : weaponColors[payload];
-                const scale = 0.75;
-
-                let core;
-                if (kind === 'weapon') {
-                    const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.6 });
-                    core = new THREE.Mesh(new THREE.OctahedronGeometry(1.4, 0), mat);
-                } else {
-                    const geo = new THREE.IcosahedronGeometry(1.0, 0);
-                    const edges = new THREE.EdgesGeometry(geo);
-                    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 });
-                    core = new THREE.LineSegments(edges, mat);
-                }
-                core.scale.setScalar(scale);
-                group.add(core);
+                const color = kind === 'ammo' ? 0x00ff00 : kind === 'health' ? 0xff3333 : kind === 'rapid' ? 0xffffff : weaponColors[payload];
+                const mat = new THREE.MeshLambertMaterial({
+                    color,
+                    emissive: color,
+                    emissiveIntensity: 0.6,
+                    wireframe: kind !== 'weapon'
+                });
+                const mesh = kind === 'weapon'
+                    ? new THREE.Mesh(new THREE.OctahedronGeometry(1.4, 0), mat)
+                    : new THREE.Mesh(new THREE.IcosahedronGeometry(0.75, 0), mat);
+                group.add(mesh);
 
                 const labelText = kind === 'weapon' ? weaponNames[payload] : kind.toUpperCase();
                 const label = createFloatingLabel(labelText, color);
-                label.scale.setScalar(0.78);
-                label.position.set(0, kind === 'weapon' ? 1.75 : 1.28, 0);
+                label.position.set(0, kind === 'weapon' ? 1.8 : 1.35, 0);
                 group.add(label);
 
-                const targetY = kind === 'weapon' ? 1.5 : 0.9;
+                position.y = kind === 'weapon' ? position.y : 1.1;
                 group.position.copy(position);
-                if (!options.fallToGround && kind !== 'weapon') group.position.y = targetY;
                 scene.add(group);
-                pickups.push({
-                    mesh: group,
-                    core,
-                    label,
-                    kind,
-                    payload,
-                    box: new THREE.Box3().setFromObject(group),
-                    falling: Boolean(options.fallToGround && group.position.y > targetY),
-                    velocityY: 0,
-                    targetY
-                });
+                pickups.push({ mesh: group, core: mesh, label, kind, payload, box: new THREE.Box3().setFromObject(group) });
             }
 
             function createFloatingLabel(text, color) {
@@ -1320,13 +1286,11 @@
                 canvas.width = 512;
                 canvas.height = 128;
                 const ctx = canvas.getContext('2d');
-                ctx.fillStyle = 'rgba(0,0,0,0.42)';
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
                 ctx.fillRect(0, 0, 512, 128);
                 ctx.strokeStyle = '#' + color.toString(16).padStart(6, '0');
-                ctx.globalAlpha = 0.72;
                 ctx.lineWidth = 6;
                 ctx.strokeRect(4, 4, 504, 120);
-                ctx.globalAlpha = 1;
                 ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
                 ctx.font = 'bold 42px Courier New';
                 ctx.textAlign = 'center';
@@ -1334,7 +1298,7 @@
                 ctx.fillText(text, 256, 66);
 
                 const texture = new THREE.CanvasTexture(canvas);
-                const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false, opacity: 0.78 });
+                const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false });
                 const plane = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 1.1), material);
                 plane.renderOrder = 998;
                 return plane;
@@ -1345,17 +1309,6 @@
                     const p = pickups[i];
                     p.mesh.rotation.y += delta * 1.8;
                     p.core.rotation.x += delta * 2.2;
-
-                    if (p.falling) {
-                        p.velocityY -= 18 * delta;
-                        p.mesh.position.y += p.velocityY * delta;
-                        if (p.mesh.position.y <= p.targetY) {
-                            p.mesh.position.y = p.targetY;
-                            p.velocityY = 0;
-                            p.falling = false;
-                        }
-                    }
-
                     p.label.lookAt(camera.getWorldPosition(new THREE.Vector3()));
                     p.box.setFromObject(p.mesh);
 
@@ -1458,7 +1411,7 @@
                 if (!ctrl || !wpnMesh) return;
 
                 const now = clock.getElapsedTime();
-                const fireDelay = now < rapidFireUntil ? 0.07 : 0.14;
+                const fireDelay = now < rapidFireUntil ? 0.11 : 0.24;
                 if (ctrl.userData.nextShot && now < ctrl.userData.nextShot) return;
                 ctrl.userData.nextShot = now + fireDelay;
 
@@ -1563,7 +1516,7 @@
 
             function getDamage(weaponType, enemy) {
                 if (enemy.isBoss) return weaponType === 'auto' ? 6 : 0;
-                if (weaponType === 'auto') return 1.4;
+                if (weaponType === 'auto') return 4;
                 if (weaponType === 'int' && enemy.type === 'float') return 0.1;
                 return 1;
             }
@@ -1576,14 +1529,18 @@
                 }
 
                 const damage = getDamage(weaponType, enemy);
-                enemy.hp = Math.max(0, enemy.hp - damage);
-                enemy.material.color.setHex(0xff5555);
+                if (enemy.type === 'float') {
+                    enemy.hp = Number(Math.max(0, enemy.hp - damage).toFixed(1));
+                } else {
+                    enemy.hp = Math.max(0, Math.ceil(enemy.hp - damage));
+                }
+
                 refreshEnemyTexture(enemy, true);
+                enemy.material.color.setHex(0xff4444);
                 setTimeout(() => {
-                    if (enemy.material && enemies.includes(enemy)) {
-                        enemy.material.color.setHex(0xffffff);
-                        refreshEnemyTexture(enemy, false);
-                    }
+                    if (!enemy.material) return;
+                    enemy.material.color.setHex(0xffffff);
+                    refreshEnemyTexture(enemy, false);
                 }, 95);
 
                 if (enemy.hp <= 0) killEnemy(enemy, enemyIndex);
@@ -1598,7 +1555,11 @@
                 score++;
 
                 if (activeWave) activeWave.dead++;
-                if (!enemy.isBoss) maybeDropPickup(enemy.mesh.position.clone());
+                if (!enemy.isBoss) {
+                    const dropPosition = enemy.mesh.position.clone();
+                    dropPosition.y = 1.1;
+                    maybeDropPickup(dropPosition);
+                }
 
                 if (enemy.isBoss) {
                     finalBossDefeated = true;
@@ -1667,7 +1628,7 @@
                                 spawnEnemy({ types: ['int', 'float', 'string', 'bool'], difficulty: 1.7, floatingChance: 0.35 }, choose(['int', 'float', 'string', 'bool']));
                             }
                             e.spawnAddsCooldown = THREE.MathUtils.randFloat(4.5, 7.0);
-                            notifyTecGPT('El jefe invocó más variables. Mantén auto tipado activo y controla la horda.');
+                            notifyTecGPT('El virus invocó más variables. Mantén auto tipado activo y controla la horda.');
                         }
                     }
 
@@ -1820,12 +1781,13 @@
                     if (dist < TILE_SIZE / 1.55) {
                         if (d.locked) {
                             if (doorWarningCooldown <= 0) {
-                                if (d.routeLocked) notifyTecGPT('Ruta no autorizada todavía. Sigue la ruta sugerida para no romper la campaña.');
+                                if (d.routeLocked) notifyTecGPT('Ruta no autorizada todavía. Sigue la ruta sugerida para eliminar el virus.');
                                 else notifyTecGPT('Puerta bloqueada. Limpia la oleada de esta habitación para desbloquear el directorio.');
                                 updateHUD(d.routeLocked ? 'RUTA BLOQUEADA' : 'OLEADA ACTIVA');
                                 doorWarningCooldown = 4.0;
                             }
                         } else {
+                            playDoorOpenSound();
                             loadDirectory(d.targetPath);
                             break;
                         }
@@ -1889,37 +1851,47 @@
                 osc.stop(t + 0.2);
             }
 
+
             function playPlayerDamageSound() {
                 ensureAudioContext();
                 const t = audioCtx.currentTime;
-
-                const thump = audioCtx.createOscillator();
-                const thumpGain = audioCtx.createGain();
-                thump.type = 'triangle';
-                thump.frequency.setValueAtTime(95, t);
-                thump.frequency.exponentialRampToValueAtTime(38, t + 0.22);
-                thumpGain.gain.setValueAtTime(0.7, t);
-                thumpGain.gain.exponentialRampToValueAtTime(0.01, t + 0.24);
-                thump.connect(thumpGain);
-                thumpGain.connect(audioCtx.destination);
-                thump.start(t);
-                thump.stop(t + 0.26);
-
-                const noiseBuffer = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * 0.12), audioCtx.sampleRate);
-                const data = noiseBuffer.getChannelData(0);
-                for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
-                const noise = audioCtx.createBufferSource();
-                noise.buffer = noiseBuffer;
-                const filter = audioCtx.createBiquadFilter();
-                filter.type = 'bandpass';
-                filter.frequency.value = 520;
+                const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
-                gain.gain.setValueAtTime(0.36, t);
-                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.14);
-                noise.connect(filter);
+                const filter = audioCtx.createBiquadFilter();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(120, t);
+                osc.frequency.exponentialRampToValueAtTime(42, t + 0.22);
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(1400, t);
+                filter.frequency.exponentialRampToValueAtTime(360, t + 0.22);
+                gain.gain.setValueAtTime(0.45, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.24);
+                osc.connect(filter);
                 filter.connect(gain);
                 gain.connect(audioCtx.destination);
-                noise.start(t);
+                osc.start(t);
+                osc.stop(t + 0.25);
+            }
+
+            function playDoorOpenSound() {
+                ensureAudioContext();
+                const t = audioCtx.currentTime;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                const filter = audioCtx.createBiquadFilter();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(70, t);
+                osc.frequency.exponentialRampToValueAtTime(220, t + 0.34);
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(500, t);
+                filter.frequency.exponentialRampToValueAtTime(2600, t + 0.34);
+                gain.gain.setValueAtTime(0.38, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.42);
+                osc.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(t);
+                osc.stop(t + 0.45);
             }
 
             // --- PANTALLAS FINALES ---
@@ -1959,7 +1931,7 @@
             }
 
             function finishGame() {
-                notifyTecGPT('Root cause eliminado. Variable Overload ha sido purgado del servidor. Buen trabajo, Boss.');
+                notifyTecGPT('El virus ha sido eliminado. Variable Overload ha sido purgado del servidor. Buen trabajo, Boss.');
                 showEndScreen('SERVER CLEAN', `SCORE FINAL: ${score}`, '#00ffaa');
             }
 
