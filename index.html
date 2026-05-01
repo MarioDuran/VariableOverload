@@ -247,6 +247,8 @@
             let listener;
             let bgm;
             let currentTecGPTAudio = null;
+            let notificationPreparing = false;
+            const soundCache = new Map();
 
             init();
 
@@ -291,7 +293,7 @@
                 const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, depthTest: false });
                 vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
                 vrHudMesh.renderOrder = 999;
-                vrHudMesh.position.set(0, 0.18, -1.25);
+                vrHudMesh.position.set(0, 0.12, -1.25);
                 vrHudMesh.rotation.x = -0.05;
                 camera.add(vrHudMesh);
 
@@ -299,7 +301,7 @@
                 const notificationMat = new THREE.MeshBasicMaterial({ map: notificationTex, transparent: true, depthTest: false, opacity: 0 });
                 notificationMesh = new THREE.Mesh(notificationGeo, notificationMat);
                 notificationMesh.renderOrder = 1001;
-                notificationMesh.position.set(0, -0.82, -1.18);
+                notificationMesh.position.set(0, -0.62, -1.18);
                 notificationMesh.rotation.x = 0.08;
                 camera.add(notificationMesh);
                 drawNotification('');
@@ -415,15 +417,18 @@
                 notificationQueue.push({
                     text,
                     speak,
-                    duration: duration || Math.min(20, Math.max(7.0, text.length / 12)),
-                    lastTypedChars: -1
+                    duration: duration || Math.min(22, Math.max(7.0, text.length / 12)),
+                    lastTypedChars: -1,
+                    ready: false,
+                    audio: null,
+                    typeDuration: null
                 });
-                if (!activeNotification) startNextNotification();
+                if (!activeNotification && !notificationPreparing) startNextNotification();
             }
 
             function startNextNotification() {
                 activeNotification = notificationQueue.shift() || null;
-                notificationStartTime = clock.getElapsedTime();
+                notificationPreparing = false;
 
                 if (!activeNotification) {
                     drawNotification('');
@@ -432,8 +437,51 @@
                 }
 
                 activeNotification.lastTypedChars = -1;
+                activeNotification.ready = false;
+                drawNotification('');
+                if (notificationMesh) notificationMesh.material.opacity = 0;
+
+                const line = activeNotification.speak ? findTecGPTVoiceLine(activeNotification.text) : null;
+                if (line) {
+                    notificationPreparing = true;
+                    loadTecGPTAudioFile(line.fileBase)
+                        .then(audio => {
+                            if (activeNotification) activeNotification.audio = audio;
+                            beginActiveNotification();
+                        })
+                        .catch(() => beginActiveNotification());
+                } else {
+                    beginActiveNotification();
+                }
+            }
+
+            function beginActiveNotification() {
+                if (!activeNotification) return;
+                notificationPreparing = false;
+                notificationStartTime = clock.getElapsedTime();
+                activeNotification.ready = true;
+                activeNotification.lastTypedChars = -1;
+
+                const displayLength = `TecGPT: "${activeNotification.text}"`.length;
+                if (activeNotification.audio && Number.isFinite(activeNotification.audio.duration) && activeNotification.audio.duration > 0) {
+                    activeNotification.duration = Math.max(activeNotification.duration, activeNotification.audio.duration + 1.0);
+                    activeNotification.typeDuration = Math.min(activeNotification.duration - 0.4, Math.max(3.5, activeNotification.audio.duration * 0.92));
+                } else {
+                    activeNotification.typeDuration = Math.max(4.0, displayLength / 18);
+                }
+
                 drawNotification(activeNotification.text, 0);
-                if (activeNotification.speak) speakTecGPT(activeNotification.text);
+                if (activeNotification.audio) {
+                    if (currentTecGPTAudio && currentTecGPTAudio !== activeNotification.audio) {
+                        try {
+                            currentTecGPTAudio.pause();
+                            currentTecGPTAudio.currentTime = 0;
+                        } catch (err) {}
+                    }
+                    currentTecGPTAudio = activeNotification.audio;
+                    currentTecGPTAudio.currentTime = 0;
+                    currentTecGPTAudio.play().catch(() => {});
+                }
             }
 
             function normalizeTecGPTLine(text) {
@@ -451,44 +499,33 @@
             }
 
             function primeTecGPTVoice() {
-                ensureAudioContext();
+                // Los audios de TecGPT se cargan bajo demanda como voiceN.mp3.
             }
 
-            function speakTecGPT(text) {
-                const line = findTecGPTVoiceLine(text);
-                if (!line) return;
-                playTecGPTAudioFile(line.fileBase);
-            }
-
-            function playTecGPTAudioFile(fileBase) {
-                const candidates = [`${fileBase}.mp3`];
-                if (currentTecGPTAudio) {
-                    try {
-                        currentTecGPTAudio.pause();
-                        currentTecGPTAudio.currentTime = 0;
-                    } catch (err) {}
-                }
-
-                const tryCandidate = (index) => {
-                    if (index >= candidates.length) return;
-                    const audio = new Audio(candidates[index]);
-                    let failed = false;
-                    currentTecGPTAudio = audio;
+            function loadTecGPTAudioFile(fileBase) {
+                return new Promise((resolve, reject) => {
+                    const audio = new Audio(`${fileBase}.mp3`);
+                    let settled = false;
+                    const finish = () => {
+                        if (settled) return;
+                        settled = true;
+                        resolve(audio);
+                    };
+                    const fail = () => {
+                        if (settled) return;
+                        settled = true;
+                        reject(new Error(`No se pudo cargar ${fileBase}.mp3`));
+                    };
                     audio.preload = 'auto';
                     audio.volume = 1.0;
-
-                    const failOver = () => {
-                        if (failed) return;
-                        failed = true;
-                        if (currentTecGPTAudio === audio) tryCandidate(index + 1);
-                    };
-
-                    audio.addEventListener('error', failOver, { once: true });
-                    const playPromise = audio.play();
-                    if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(failOver);
-                };
-
-                tryCandidate(0);
+                    audio.addEventListener('canplaythrough', finish, { once: true });
+                    audio.addEventListener('loadeddata', finish, { once: true });
+                    audio.addEventListener('error', fail, { once: true });
+                    setTimeout(() => {
+                        if (!settled && audio.readyState >= 2) finish();
+                    }, 1800);
+                    audio.load();
+                });
             }
 
             function drawNotification(text, visibleChars = Infinity) {
@@ -514,26 +551,27 @@
             }
 
             function updateNotification() {
-                if (!notificationMesh || !activeNotification) return;
+                if (!notificationMesh || !activeNotification || !activeNotification.ready) return;
 
                 const now = clock.getElapsedTime();
                 const elapsed = now - notificationStartTime;
                 const duration = activeNotification.duration;
                 let alpha = 1;
-                let y = -0.44;
+                let y = -0.34;
 
                 if (elapsed < 0.45) {
                     const t = elapsed / 0.45;
-                    y = THREE.MathUtils.lerp(-0.82, -0.44, easeOutCubic(t));
+                    y = THREE.MathUtils.lerp(-0.62, -0.34, easeOutCubic(t));
                     alpha = t;
                 } else if (elapsed > duration - 0.45) {
                     const t = (elapsed - (duration - 0.45)) / 0.45;
-                    y = THREE.MathUtils.lerp(-0.44, -0.82, easeOutCubic(t));
+                    y = THREE.MathUtils.lerp(-0.34, -0.62, easeOutCubic(t));
                     alpha = 1 - t;
                 }
 
                 const displayLength = `TecGPT: "${activeNotification.text}"`.length;
-                const typedChars = Math.min(displayLength, Math.floor(elapsed * 24));
+                const typeDuration = Math.max(1.0, activeNotification.typeDuration || (displayLength / 18));
+                const typedChars = Math.min(displayLength, Math.floor((elapsed / typeDuration) * displayLength));
                 if (typedChars !== activeNotification.lastTypedChars) {
                     activeNotification.lastTypedChars = typedChars;
                     drawNotification(activeNotification.text, typedChars);
@@ -593,8 +631,8 @@
                 const barWidth = 360;
                 const barHeight = 16;
                 const barX = 640 - (barWidth / 2);
-                const hpY = 20;
-                const staminaY = 44;
+                const hpY = 46;
+                const staminaY = 70;
 
                 vrHudCtx.fillStyle = 'rgba(0, 60, 0, 0.42)';
                 vrHudCtx.fillRect(barX, hpY, barWidth, barHeight);
@@ -611,30 +649,30 @@
                 vrHudCtx.textAlign = 'center';
                 vrHudCtx.fillStyle = 'rgba(120, 255, 160, 0.88)';
                 vrHudCtx.font = 'bold 26px Courier New';
-                vrHudCtx.fillText(currentPath, 640, 92);
+                vrHudCtx.fillText(currentPath, 640, 118);
                 vrHudCtx.fillStyle = activeWave ? 'rgba(255, 180, 0, 0.88)' : 'rgba(0, 255, 170, 0.82)';
                 vrHudCtx.font = 'bold 24px Courier New';
-                vrHudCtx.fillText(`ENEMIGOS: ${remaining}  |  ${roomState.cleared ? 'PUERTAS ABIERTAS' : 'PUERTAS BLOQUEADAS'}`, 640, 122);
+                vrHudCtx.fillText(`ENEMIGOS: ${remaining}  |  ${roomState.cleared ? 'PUERTAS ABIERTAS' : 'PUERTAS BLOQUEADAS'}`, 640, 148);
 
                 if (message) {
                     vrHudCtx.fillStyle = 'rgba(255, 190, 0, 0.9)';
                     vrHudCtx.font = 'bold 26px Courier New';
-                    vrHudCtx.fillText(message, 640, 152);
+                    vrHudCtx.fillText(message, 640, 178);
                 }
 
                 // Inferior izquierda: arma y munición total disponible.
                 vrHudCtx.textAlign = 'left';
                 vrHudCtx.fillStyle = colorHex;
                 vrHudCtx.font = 'bold 38px Courier New';
-                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 24, 250);
+                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 70, 268);
 
                 vrHudCtx.fillStyle = 'rgba(0, 255, 255, 0.88)';
                 vrHudCtx.font = 'bold 30px Courier New';
-                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 24, 290);
+                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 70, 308);
 
                 if (clock.getElapsedTime() < rapidFireUntil) {
                     vrHudCtx.fillStyle = 'rgba(255, 255, 255, 0.92)';
-                    vrHudCtx.fillText('RAPID FIRE', 250, 290);
+                    vrHudCtx.fillText('RAPID FIRE', 300, 308);
                 }
 
                 drawMinimap();
@@ -643,8 +681,8 @@
 
             function drawMinimap() {
                 const mapSize = 150;
-                const offsetX = hudCanvas.width - mapSize - 24;
-                const offsetY = hudCanvas.height - mapSize - 18;
+                const offsetX = hudCanvas.width - mapSize - 74;
+                const offsetY = hudCanvas.height - mapSize - 4;
                 const cellW = mapSize / GRID_SIZE;
                 const cellH = mapSize / GRID_SIZE;
 
@@ -666,6 +704,22 @@
                     }
                 }
 
+                const nextDoor = getNextCampaignDoor();
+                if (nextDoor) {
+                    const gx = Math.round(nextDoor.mesh.position.x / TILE_SIZE);
+                    const gz = Math.round(nextDoor.mesh.position.z / TILE_SIZE);
+                    const pulse = 0.45 + 0.55 * ((Math.sin(clock.getElapsedTime() * 6.0) + 1) / 2);
+                    vrHudCtx.save();
+                    vrHudCtx.shadowColor = '#00ff66';
+                    vrHudCtx.shadowBlur = 18 + pulse * 14;
+                    vrHudCtx.strokeStyle = `rgba(0, 255, 80, ${0.65 + pulse * 0.35})`;
+                    vrHudCtx.lineWidth = 4;
+                    vrHudCtx.strokeRect(offsetX + gx * cellW - 2, offsetY + gz * cellH - 2, cellW + 4, cellH + 4);
+                    vrHudCtx.fillStyle = `rgba(0, 255, 80, ${0.20 + pulse * 0.25})`;
+                    vrHudCtx.fillRect(offsetX + gx * cellW, offsetY + gz * cellH, cellW, cellH);
+                    vrHudCtx.restore();
+                }
+
                 vrHudCtx.fillStyle = '#ffffff';
                 vrHudCtx.beginPath();
                 vrHudCtx.arc(offsetX + (playerDolly.position.x / TILE_SIZE) * cellW, offsetY + (playerDolly.position.z / TILE_SIZE) * cellH, 4.0, 0, Math.PI * 2);
@@ -680,6 +734,20 @@
                 pickups.forEach(p => {
                     vrHudCtx.fillRect(offsetX + (p.mesh.position.x / TILE_SIZE) * cellW - 2, offsetY + (p.mesh.position.z / TILE_SIZE) * cellH - 2, 4, 4);
                 });
+            }
+
+            function getNextCampaignDoor() {
+                const mission = missions[missionIndex];
+                if (!mission || !doors.length) return null;
+                const route = mission.route;
+                if (currentPath === route) return null;
+                if (!route.startsWith(currentPath === '/' ? '/' : currentPath + '/')) return null;
+
+                const currentParts = currentPath === '/' ? [] : currentPath.split('/').filter(Boolean);
+                const routeParts = route.split('/').filter(Boolean);
+                const nextParts = routeParts.slice(0, currentParts.length + 1);
+                const nextPath = '/' + nextParts.join('/');
+                return doors.find(door => door.targetPath === nextPath) || null;
             }
 
             function getRemainingEnemiesInRoom() {
@@ -977,7 +1045,7 @@
                         spawnRate: 1.05,
                         maxAlive: 3 + Math.min(2, depth),
                         difficulty: baseDifficulty,
-                        floatingChance: path.startsWith('/home') ? 0.55 : 0.2,
+                        floatingChance: path.startsWith('/home') ? Math.min(0.20, 0.04 + depth * 0.04) : 0.04,
                         previewFloat: true
                     };
                 }
@@ -1112,7 +1180,9 @@
             function makeEnemyHp(type, difficulty, previewFloat = false) {
                 const diff = Math.max(1, difficulty || 1);
                 if (type === 'float') {
-                    return Number((1 + (diff - 1) * 0.85 + Math.random() * (0.45 + diff * 0.18)).toFixed(2));
+                    const base = previewFloat ? 1.05 : 1;
+                    const spread = previewFloat ? 0.35 : (0.45 + diff * 0.18);
+                    return Number((base + (diff - 1) * 0.85 + Math.random() * spread).toFixed(2));
                 }
                 if (type === 'int') {
                     return Math.max(1, Math.round(1 + (diff - 1) * 1.25 + Math.random() * Math.max(0.35, diff * 0.75)));
@@ -1134,7 +1204,7 @@
                 const type = forcedType || choose(config.types);
                 const floating = Math.random() < (config.floatingChance || 0) || type === 'float';
                 const previewFloat = config.previewFloat && floating;
-                const actualType = previewFloat ? 'int' : type;
+                const actualType = previewFloat ? 'float' : type;
                 const label = actualType === 'string'
                     ? choose(typeLabels.string)
                     : actualType === 'bool'
@@ -1346,14 +1416,18 @@
             function collectPickup(pickup) {
                 if (pickup.kind === 'ammo') {
                     clipAmmo = Math.min(MAX_RESERVE, clipAmmo + 24);
+                    playPowerupSound();
                     updateHUD('+24 BALAS');
                 } else if (pickup.kind === 'health') {
                     health = Math.min(100, health + 24);
+                    playCureSound();
                     updateHUD('+24 HP');
                 } else if (pickup.kind === 'rapid') {
                     rapidFireUntil = Math.max(rapidFireUntil, clock.getElapsedTime() + 12);
+                    playPowerupSound();
                     updateHUD('RAPID FIRE x12s');
                 } else if (pickup.kind === 'weapon') {
+                    playPowerupSound();
                     const type = pickup.payload;
                     if (!unlockedWeapons.includes(type)) unlockedWeapons.push(type);
                     claimedUpgrades.add(type);
@@ -1572,6 +1646,7 @@
                 dyingEnemies.push(enemy);
                 enemies.splice(enemyIndex, 1);
                 score++;
+                playEnemyKillSound();
 
                 if (activeWave) activeWave.dead++;
                 if (!enemy.isBoss) {
@@ -1653,55 +1728,19 @@
 
                     const dirToPlayer = new THREE.Vector3().subVectors(playerDolly.position, e.mesh.position);
                     const distToPlayer = dirToPlayer.length();
-                    let dir = new THREE.Vector3();
-                    let hasLOS = false;
+                    const directDir = dirToPlayer.clone();
+                    directDir.y = 0;
+                    if (directDir.length() > 0) directDir.normalize();
 
-                    if (distToPlayer < 35) {
-                        const ray = new THREE.Raycaster(e.mesh.position, dirToPlayer.clone().normalize(), 0, distToPlayer);
-                        const hits = ray.intersectObjects(wallMeshes);
-                        if (hits.length === 0) hasLOS = true;
+                    const hasLOS = hasLineOfSightToPlayer(e, distToPlayer);
+                    const pathDir = getPathfindingDirection(e);
+                    const primaryDir = hasLOS ? directDir : pathDir;
+                    const moved = moveEnemyWithCollision(e, primaryDir, delta);
+
+                    // Si el enemigo intentó ir directo pero chocó, usa el flow-field solo para desatorarse.
+                    if (!moved && hasLOS && pathDir.lengthSq() > 0) {
+                        moveEnemyWithCollision(e, pathDir, delta * 0.95);
                     }
-
-                    if (hasLOS) {
-                        dir.copy(dirToPlayer);
-                    } else {
-                        const ex = Math.floor(e.mesh.position.x / TILE_SIZE);
-                        const ez = Math.floor(e.mesh.position.z / TILE_SIZE);
-                        let bestDist = (flowField[ez] && flowField[ez][ex] !== undefined) ? flowField[ez][ex] : 9999;
-                        let bestX = ex;
-                        let bestZ = ez;
-                        const dirs = [{ x: 0, z: -1 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 1, z: 0 }];
-
-                        for (const d of dirs) {
-                            const nx = ex + d.x;
-                            const nz = ez + d.z;
-                            if (nx >= 0 && nx < GRID_SIZE && nz >= 0 && nz < GRID_SIZE && mapGrid[nz][nx] !== 1) {
-                                if (flowField[nz][nx] < bestDist) {
-                                    bestDist = flowField[nz][nx];
-                                    bestX = nx;
-                                    bestZ = nz;
-                                }
-                            }
-                        }
-
-                        const targetPos = new THREE.Vector3(bestX * TILE_SIZE, e.mesh.position.y, bestZ * TILE_SIZE);
-                        dir.subVectors(targetPos, e.mesh.position);
-                        if (dir.length() < 1.0) dir.copy(dirToPlayer);
-                    }
-
-                    dir.y = 0;
-                    if (dir.length() > 0) dir.normalize();
-
-                    const prevX = e.mesh.position.x;
-                    const prevZ = e.mesh.position.z;
-
-                    e.mesh.position.x += dir.x * e.speed * delta;
-                    e.box.setFromObject(e.mesh);
-                    if (!e.floating && walls.some(w => e.box.intersectsBox(w.box))) e.mesh.position.x = prevX;
-
-                    e.mesh.position.z += dir.z * e.speed * delta;
-                    e.box.setFromObject(e.mesh);
-                    if (!e.floating && walls.some(w => e.box.intersectsBox(w.box))) e.mesh.position.z = prevZ;
 
                     if (distToPlayer < (e.isBoss ? 6.0 : 3.6) && e.attackCooldown <= 0 && isGameRunning) {
                         const damage = e.isBoss ? 24 : 10 + missionIndex * 2;
@@ -1715,9 +1754,80 @@
                             updateHUD('¡SISTEMA DAÑADO!');
                         }
 
-                        e.mesh.position.addScaledVector(dir, -4.5);
+                        e.mesh.position.addScaledVector(directDir, -4.5);
+                        e.box.setFromObject(e.mesh);
                     }
                 }
+            }
+
+            function hasLineOfSightToPlayer(enemy, distToPlayer) {
+                if (distToPlayer > 42) return false;
+                const from = enemy.mesh.position.clone();
+                const to = playerDolly.position.clone();
+                to.y = from.y;
+                const direction = to.sub(from).normalize();
+                const ray = new THREE.Raycaster(from, direction, 0, distToPlayer);
+                return ray.intersectObjects(wallMeshes).length === 0;
+            }
+
+            function getPathfindingDirection(enemy) {
+                const ex = Math.floor(enemy.mesh.position.x / TILE_SIZE);
+                const ez = Math.floor(enemy.mesh.position.z / TILE_SIZE);
+                let bestDist = (flowField[ez] && flowField[ez][ex] !== undefined) ? flowField[ez][ex] : 9999;
+                let bestX = ex;
+                let bestZ = ez;
+                const dirs = [{ x: 0, z: -1 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 1, z: 0 }];
+
+                for (const d of dirs) {
+                    const nx = ex + d.x;
+                    const nz = ez + d.z;
+                    if (nx >= 0 && nx < GRID_SIZE && nz >= 0 && nz < GRID_SIZE && mapGrid[nz][nx] !== 1) {
+                        if (flowField[nz][nx] < bestDist) {
+                            bestDist = flowField[nz][nx];
+                            bestX = nx;
+                            bestZ = nz;
+                        }
+                    }
+                }
+
+                const targetPos = new THREE.Vector3(bestX * TILE_SIZE, enemy.mesh.position.y, bestZ * TILE_SIZE);
+                const dir = targetPos.sub(enemy.mesh.position);
+                dir.y = 0;
+                if (dir.length() > 0.05) dir.normalize();
+                return dir;
+            }
+
+            function moveEnemyWithCollision(enemy, dir, delta) {
+                if (!dir || dir.lengthSq() === 0) return false;
+                const step = enemy.speed * delta;
+                let moved = false;
+
+                const prevX = enemy.mesh.position.x;
+                enemy.mesh.position.x += dir.x * step;
+                enemy.box.setFromObject(enemy.mesh);
+                if (enemyHitsWorldCollision(enemy)) {
+                    enemy.mesh.position.x = prevX;
+                } else {
+                    moved = Math.abs(dir.x * step) > 0.001;
+                }
+
+                const prevZ = enemy.mesh.position.z;
+                enemy.mesh.position.z += dir.z * step;
+                enemy.box.setFromObject(enemy.mesh);
+                if (enemyHitsWorldCollision(enemy)) {
+                    enemy.mesh.position.z = prevZ;
+                } else {
+                    moved = moved || Math.abs(dir.z * step) > 0.001;
+                }
+
+                enemy.box.setFromObject(enemy.mesh);
+                return moved;
+            }
+
+            function enemyHitsWorldCollision(enemy) {
+                if (walls.some(w => enemy.box.intersectsBox(w.box))) return true;
+                if (doors.some(d => d.locked && enemy.box.intersectsBox(d.box))) return true;
+                return false;
             }
 
             // --- MOVIMIENTO / PUERTAS ---
@@ -1815,102 +1925,44 @@
             }
 
             // --- AUDIO ---
-            function ensureAudioContext() {
-                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                if (audioCtx.state === 'suspended') audioCtx.resume();
+            function playSoundResource(fileName, volume = 1.0) {
+                if (!soundCache.has(fileName)) {
+                    const base = new Audio(fileName);
+                    base.preload = 'auto';
+                    base.load();
+                    soundCache.set(fileName, base);
+                }
+                const audio = soundCache.get(fileName).cloneNode(true);
+                audio.volume = volume;
+                audio.play().catch(() => {});
             }
 
             function playShootSound() {
-                ensureAudioContext();
-                const t = audioCtx.currentTime;
-                const bufferSize = audioCtx.sampleRate * 0.15;
-                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-                const data = buffer.getChannelData(0);
-                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                playSoundResource('shot.mp3', 0.9);
+            }
 
-                const noise = audioCtx.createBufferSource();
-                noise.buffer = buffer;
-                const noiseFilter = audioCtx.createBiquadFilter();
-                noiseFilter.type = 'lowpass';
-                noiseFilter.frequency.value = 3600;
-                const noiseGain = audioCtx.createGain();
-                noiseGain.gain.setValueAtTime(0.75, t);
-                noiseGain.gain.exponentialRampToValueAtTime(0.01, t + 0.12);
-                noise.connect(noiseFilter);
-                noiseFilter.connect(noiseGain);
-                noiseGain.connect(audioCtx.destination);
+            function playEnemyKillSound() {
+                playSoundResource('enemy_kill.mp3', 0.95);
+            }
 
-                const osc = audioCtx.createOscillator();
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(170, t);
-                osc.frequency.exponentialRampToValueAtTime(0.01, t + 0.1);
-                const oscGain = audioCtx.createGain();
-                oscGain.gain.setValueAtTime(0.75, t);
-                oscGain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
-                osc.connect(oscGain);
-                oscGain.connect(audioCtx.destination);
+            function playCureSound() {
+                playSoundResource('cure.mp3', 0.95);
+            }
 
-                noise.start(t);
-                osc.start(t);
+            function playPowerupSound() {
+                playSoundResource('powerup.mp3', 0.95);
             }
 
             function playErrorSound() {
-                ensureAudioContext();
-                const t = audioCtx.currentTime;
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                osc.type = 'square';
-                osc.frequency.setValueAtTime(90, t);
-                osc.frequency.setValueAtTime(55, t + 0.08);
-                gain.gain.setValueAtTime(0.3, t);
-                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.18);
-                osc.connect(gain);
-                gain.connect(audioCtx.destination);
-                osc.start(t);
-                osc.stop(t + 0.2);
+                playSoundResource('error.mp3', 0.75);
             }
 
-
             function playPlayerDamageSound() {
-                ensureAudioContext();
-                const t = audioCtx.currentTime;
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                const filter = audioCtx.createBiquadFilter();
-                osc.type = 'sawtooth';
-                osc.frequency.setValueAtTime(120, t);
-                osc.frequency.exponentialRampToValueAtTime(42, t + 0.22);
-                filter.type = 'lowpass';
-                filter.frequency.setValueAtTime(1400, t);
-                filter.frequency.exponentialRampToValueAtTime(360, t + 0.22);
-                gain.gain.setValueAtTime(0.45, t);
-                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.24);
-                osc.connect(filter);
-                filter.connect(gain);
-                gain.connect(audioCtx.destination);
-                osc.start(t);
-                osc.stop(t + 0.25);
+                playSoundResource('damage.mp3', 0.95);
             }
 
             function playDoorOpenSound() {
-                ensureAudioContext();
-                const t = audioCtx.currentTime;
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                const filter = audioCtx.createBiquadFilter();
-                osc.type = 'square';
-                osc.frequency.setValueAtTime(70, t);
-                osc.frequency.exponentialRampToValueAtTime(220, t + 0.34);
-                filter.type = 'lowpass';
-                filter.frequency.setValueAtTime(500, t);
-                filter.frequency.exponentialRampToValueAtTime(2600, t + 0.34);
-                gain.gain.setValueAtTime(0.38, t);
-                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.42);
-                osc.connect(filter);
-                filter.connect(gain);
-                gain.connect(audioCtx.destination);
-                osc.start(t);
-                osc.stop(t + 0.45);
+                playSoundResource('door_open.mp3', 0.95);
             }
 
             // --- PANTALLAS FINALES ---
