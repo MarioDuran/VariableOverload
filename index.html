@@ -201,7 +201,7 @@
             // --- HUD VR ---
             const hudCanvas = document.createElement('canvas');
             hudCanvas.width = 1280;
-            hudCanvas.height = 320;
+            hudCanvas.height = 420;
             const vrHudCtx = hudCanvas.getContext('2d');
             const vrHudTex = new THREE.CanvasTexture(hudCanvas);
             let vrHudMesh;
@@ -220,8 +220,6 @@
             let audioCtx;
             let listener;
             let bgm;
-            let speechPrimed = false;
-            let preferredTecGPTVoice = null;
 
             init();
 
@@ -244,9 +242,8 @@
 
                 const vrButton = VRButton.createButton(renderer);
                 vrButton.addEventListener('click', () => {
-                    ensureAudioContext();
-                    primeTecGPTVoice();
                     document.getElementById('info').style.display = 'none';
+                    unlockWebAudioAndSpeech();
                     if (!isGameRunning) startGame();
                 });
                 document.body.appendChild(vrButton);
@@ -264,11 +261,11 @@
                 bgm = new THREE.Audio(listener);
 
                 // HUD superior/inferior del visor.
-                const hudGeo = new THREE.PlaneGeometry(1.9, 0.48);
-                const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, depthTest: false, opacity: 0.78 });
+                const hudGeo = new THREE.PlaneGeometry(1.9, 0.62);
+                const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, depthTest: false, opacity: 0.82 });
                 vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
                 vrHudMesh.renderOrder = 999;
-                vrHudMesh.position.set(0, 0.08, -1.25);
+                vrHudMesh.position.set(0, 0.05, -1.25);
                 vrHudMesh.rotation.x = -0.05;
                 camera.add(vrHudMesh);
 
@@ -298,8 +295,7 @@
                         rightWeaponMesh = createGunMesh();
                         rightController.add(rightWeaponMesh);
                         rightController.addEventListener('selectstart', () => {
-                            ensureAudioContext();
-                            primeTecGPTVoice();
+                            unlockWebAudioAndSpeech();
                             rightController.userData.isSelecting = true;
                             fireWeapon(rightController, rightWeaponMesh);
                         });
@@ -309,8 +305,7 @@
                         leftWeaponMesh = createGunMesh();
                         leftController.add(leftWeaponMesh);
                         leftController.addEventListener('selectstart', () => {
-                            ensureAudioContext();
-                            primeTecGPTVoice();
+                            unlockWebAudioAndSpeech();
                             leftController.userData.isSelecting = true;
                             fireWeapon(leftController, leftWeaponMesh);
                         });
@@ -325,10 +320,6 @@
                 const controller2 = renderer.xr.getController(1);
                 controller2.addEventListener('connected', onControllerConnected);
                 playerDolly.add(controller2);
-
-                if ('speechSynthesis' in window) {
-                    window.speechSynthesis.onvoiceschanged = () => primeTecGPTVoice();
-                }
 
                 buildBaseEnvironment();
                 updateHUD('SISTEMA EN ESPERA');
@@ -366,6 +357,7 @@
                 stamina = MAX_STAMINA;
                 isReloading = false;
                 rapidFireUntil = 0;
+                unlockWebAudioAndSpeech();
                 unlockedWeapons = ['int'];
                 currentWeaponIndex = 0;
                 missionIndex = 0;
@@ -376,8 +368,6 @@
                 notificationQueue.length = 0;
                 activeNotification = null;
                 updateWeaponMaterial();
-                ensureAudioContext();
-                primeTecGPTVoice();
 
                 if (!bgm.isPlaying) {
                     const audioLoader = new THREE.AudioLoader();
@@ -420,46 +410,98 @@
                 if (activeNotification.speak) speakTecGPT(activeNotification.text);
             }
 
-            function primeTecGPTVoice() {
-                if (!('speechSynthesis' in window)) return;
-                try {
-                    window.speechSynthesis.resume();
-                    const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
-                    preferredTecGPTVoice = voices.find(v => /es[-_](MX|419|ES)/i.test(v.lang))
-                        || voices.find(v => /^es/i.test(v.lang))
-                        || voices[0]
-                        || null;
+            function cleanTecGPTText(text) {
+                return String(text || '')
+                    .replace(/^TecGPT\s*[:\-\/]*\s*/i, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+            }
 
-                    // Algunos runtimes WebXR bloquean TTS hasta recibir un gesto de usuario.
-                    // Esta utterance silenciosa deja preparado el canal antes de las instrucciones reales.
-                    if (!speechPrimed) {
-                        const primer = new SpeechSynthesisUtterance(' ');
-                        primer.volume = 0;
-                        primer.lang = 'es-MX';
-                        if (preferredTecGPTVoice) primer.voice = preferredTecGPTVoice;
-                        window.speechSynthesis.speak(primer);
-                        speechPrimed = true;
-                    }
-                } catch (err) {}
+            function unlockWebAudioAndSpeech() {
+                ensureAudioContext();
+                primeSpeechSynth();
+            }
+
+            function primeSpeechSynth() {
+                if (!('speechSynthesis' in window)) return;
+                window.speechSynthesis.resume();
+                window.speechSynthesis.getVoices();
+                if (typeof window.speechSynthesis.onvoiceschanged !== 'function') {
+                    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+                }
+            }
+
+            function getTecGPTVoice() {
+                if (!('speechSynthesis' in window)) return null;
+                const voices = window.speechSynthesis.getVoices();
+                return voices.find(v => /es[-_]?MX/i.test(v.lang))
+                    || voices.find(v => /^es/i.test(v.lang))
+                    || voices.find(v => /spanish|español/i.test(v.name))
+                    || voices[0]
+                    || null;
             }
 
             function speakTecGPT(text) {
-                if (!('speechSynthesis' in window)) return;
-                primeTecGPTVoice();
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.lang = preferredTecGPTVoice ? preferredTecGPTVoice.lang : 'es-MX';
-                if (preferredTecGPTVoice) utterance.voice = preferredTecGPTVoice;
-                utterance.rate = 0.98;
-                utterance.pitch = 0.92;
-                utterance.volume = 1.0;
-                window.speechSynthesis.cancel();
-                window.speechSynthesis.resume();
-                setTimeout(() => {
-                    try {
+                const clean = cleanTecGPTText(text);
+                unlockWebAudioAndSpeech();
+
+                // Web Speech API: se intenta leer con la voz local del navegador.
+                if ('speechSynthesis' in window) {
+                    const utterance = new SpeechSynthesisUtterance(clean);
+                    utterance.lang = 'es-MX';
+                    utterance.rate = 1.02;
+                    utterance.pitch = 0.94;
+                    utterance.volume = 1.0;
+                    const voice = getTecGPTVoice();
+                    if (voice) utterance.voice = voice;
+
+                    window.speechSynthesis.cancel();
+                    window.speechSynthesis.resume();
+                    setTimeout(() => {
                         window.speechSynthesis.resume();
                         window.speechSynthesis.speak(utterance);
-                    } catch (err) {}
-                }, 60);
+                    }, 60);
+                }
+
+                // Fallback audible en WebXR: algunos visores no enrutan speechSynthesis al casco.
+                // Este sintetizador robótico usa WebAudio, por eso sí sale por el audio de VR.
+                playTecGPTRobotVoice(clean);
+            }
+
+            function playTecGPTRobotVoice(text) {
+                ensureAudioContext();
+                const chars = cleanTecGPTText(text).slice(0, 180).replace(/[\s,.;:]+/g, ' ').split('');
+                let t = audioCtx.currentTime + 0.04;
+                const master = audioCtx.createGain();
+                master.gain.setValueAtTime(0.0001, t);
+                master.gain.linearRampToValueAtTime(0.055, t + 0.03);
+                master.gain.setValueAtTime(0.055, t + Math.min(4, chars.length * 0.045));
+                master.gain.linearRampToValueAtTime(0.0001, t + Math.min(4.2, chars.length * 0.045 + 0.25));
+                master.connect(audioCtx.destination);
+
+                chars.forEach((ch, index) => {
+                    if (ch === ' ') {
+                        t += 0.055;
+                        return;
+                    }
+                    const code = ch.toLowerCase().charCodeAt(0) || 97;
+                    const dur = 0.032 + ((code % 5) * 0.004);
+                    const freq = 170 + (code % 19) * 14;
+
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = index % 3 === 0 ? 'sawtooth' : 'square';
+                    osc.frequency.setValueAtTime(freq, t);
+                    osc.frequency.linearRampToValueAtTime(freq * 1.18, t + dur);
+                    gain.gain.setValueAtTime(0.0001, t);
+                    gain.gain.linearRampToValueAtTime(0.09, t + 0.006);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+                    osc.connect(gain);
+                    gain.connect(master);
+                    osc.start(t);
+                    osc.stop(t + dur + 0.02);
+                    t += dur + 0.012;
+                });
             }
 
             function drawNotification(text) {
@@ -469,20 +511,17 @@
                     return;
                 }
 
-                notificationCtx.fillStyle = 'rgba(0, 20, 10, 0.68)';
-                roundRect(notificationCtx, 24, 24, 1152, 212, 28, true, false);
-                notificationCtx.strokeStyle = '#00ffaa';
-                notificationCtx.lineWidth = 8;
-                roundRect(notificationCtx, 24, 24, 1152, 212, 28, false, true);
+                const clean = cleanTecGPTText(text);
+                notificationCtx.fillStyle = 'rgba(0, 20, 10, 0.54)';
+                roundRect(notificationCtx, 24, 34, 1152, 174, 28, true, false);
+                notificationCtx.strokeStyle = 'rgba(0, 255, 170, 0.58)';
+                notificationCtx.lineWidth = 6;
+                roundRect(notificationCtx, 24, 34, 1152, 174, 28, false, true);
 
-                notificationCtx.fillStyle = '#00ffaa';
+                notificationCtx.fillStyle = 'rgba(234, 255, 255, 0.86)';
                 notificationCtx.font = 'bold 34px Courier New';
                 notificationCtx.textAlign = 'left';
-                notificationCtx.fillText('TecGPT // instrucciones', 58, 70);
-
-                notificationCtx.fillStyle = '#eaffff';
-                notificationCtx.font = 'bold 32px Courier New';
-                wrapText(notificationCtx, text, 58, 118, 1080, 40);
+                wrapText(notificationCtx, `TecGPT: "${clean}"`, 58, 94, 1085, 42);
                 notificationTex.needsUpdate = true;
             }
 
@@ -506,7 +545,7 @@
                 }
 
                 notificationMesh.position.y = y;
-                notificationMesh.material.opacity = THREE.MathUtils.clamp(alpha * 0.82, 0, 0.82);
+                notificationMesh.material.opacity = THREE.MathUtils.clamp(alpha * 0.78, 0, 0.78);
 
                 if (elapsed > duration) startNextNotification();
             }
@@ -551,49 +590,66 @@
             // --- HUD ---
             function updateHUD(message = '') {
                 vrHudCtx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
-                vrHudCtx.fillStyle = 'rgba(0, 18, 6, 0.34)';
-                roundRect(vrHudCtx, 8, 8, hudCanvas.width - 16, 188, 18, true, false);
 
                 const currentWeapon = unlockedWeapons[currentWeaponIndex] || 'int';
                 const colorHex = '#' + weaponColors[currentWeapon].toString(16).padStart(6, '0');
+                const now = clock.getElapsedTime();
 
+                // Barras superiores: salud y stamina sin texto.
+                const barWidth = 420;
+                const barHeight = 18;
+                const barX = hudCanvas.width / 2 - barWidth / 2;
+                const hpY = 24;
+                const staminaY = 52;
+
+                vrHudCtx.fillStyle = 'rgba(0, 40, 0, 0.34)';
+                vrHudCtx.fillRect(barX, hpY, barWidth, barHeight);
+                vrHudCtx.fillStyle = 'rgba(255, 40, 40, 0.78)';
+                vrHudCtx.fillRect(barX, hpY, barWidth * THREE.MathUtils.clamp(health / 100, 0, 1), barHeight);
+                vrHudCtx.strokeStyle = 'rgba(255,255,255,0.38)';
+                vrHudCtx.lineWidth = 2;
+                vrHudCtx.strokeRect(barX, hpY, barWidth, barHeight);
+
+                vrHudCtx.fillStyle = 'rgba(0, 40, 0, 0.34)';
+                vrHudCtx.fillRect(barX, staminaY, barWidth, barHeight);
+                vrHudCtx.fillStyle = stamina > 20 ? 'rgba(0, 255, 120, 0.76)' : 'rgba(255, 80, 40, 0.76)';
+                vrHudCtx.fillRect(barX, staminaY, barWidth * THREE.MathUtils.clamp(stamina / MAX_STAMINA, 0, 1), barHeight);
+                vrHudCtx.strokeStyle = 'rgba(255,255,255,0.32)';
+                vrHudCtx.strokeRect(barX, staminaY, barWidth, barHeight);
+
+                // Directorio actual y contador de enemigos debajo de las barras.
+                const remaining = getRemainingEnemiesInRoom();
+                const roomState = getRoomState(currentPath);
+                vrHudCtx.textAlign = 'center';
+                vrHudCtx.fillStyle = 'rgba(0, 255, 170, 0.82)';
+                vrHudCtx.font = 'bold 28px Courier New';
+                vrHudCtx.fillText(`${currentPath}`, hudCanvas.width / 2, 104);
+                vrHudCtx.font = 'bold 22px Courier New';
+                vrHudCtx.fillStyle = roomState.cleared ? 'rgba(0,255,170,0.66)' : 'rgba(255,170,0,0.72)';
+                vrHudCtx.fillText(`ENEMIGOS: ${remaining}`, hudCanvas.width / 2, 134);
+
+                // Arma y munición abajo a la izquierda.
                 vrHudCtx.textAlign = 'left';
                 vrHudCtx.fillStyle = colorHex;
-                vrHudCtx.font = 'bold 40px Courier New';
-                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 24, 44);
+                vrHudCtx.globalAlpha = 0.84;
+                vrHudCtx.font = 'bold 34px Courier New';
+                vrHudCtx.fillText(weaponNames[currentWeapon], 28, hudCanvas.height - 86);
+                vrHudCtx.fillStyle = 'rgba(0, 255, 255, 0.78)';
+                vrHudCtx.font = 'bold 28px Courier New';
+                vrHudCtx.fillText(`${clipAmmo}/${reserveAmmo}`, 28, hudCanvas.height - 48);
 
-                vrHudCtx.fillStyle = '#0ff';
-                vrHudCtx.font = 'bold 30px Courier New';
-                vrHudCtx.fillText(`AMMO: ${clipAmmo}/${reserveAmmo}`, 24, 88);
-
-                if (clock.getElapsedTime() < rapidFireUntil) {
-                    vrHudCtx.fillStyle = '#ffffff';
-                    vrHudCtx.fillText('RAPID FIRE', 24, 130);
+                if (now < rapidFireUntil) {
+                    vrHudCtx.fillStyle = 'rgba(255,255,255,0.76)';
+                    vrHudCtx.font = 'bold 22px Courier New';
+                    vrHudCtx.fillText('RAPID FIRE', 28, hudCanvas.height - 18);
                 }
-
-                vrHudCtx.textAlign = 'center';
-                vrHudCtx.fillStyle = '#0f0';
-                vrHudCtx.font = 'bold 36px Courier New';
-                vrHudCtx.fillText(`HP: ${Math.max(0, Math.floor(health))}%  |  KILLS: ${score}`, 640, 44);
-
-                const barWidth = 360;
-                const barX = 640 - (barWidth / 2);
-                vrHudCtx.fillStyle = '#004400';
-                vrHudCtx.fillRect(barX, 64, barWidth, 16);
-                vrHudCtx.fillStyle = stamina > 20 ? '#0f0' : '#ff0000';
-                vrHudCtx.fillRect(barX, 64, (stamina / MAX_STAMINA) * barWidth, 16);
-
-                const remaining = getRemainingEnemiesInRoom();
-                vrHudCtx.fillStyle = activeWave ? '#ffaa00' : '#00ffaa';
-                vrHudCtx.font = 'bold 30px Courier New';
-                const roomState = getRoomState(currentPath);
-                const lockText = roomState.cleared ? 'PUERTAS ABIERTAS' : 'PUERTAS BLOQUEADAS';
-                vrHudCtx.fillText(`ROOM: ${currentPath}  |  ENEMIGOS: ${remaining}  |  ${lockText}`, 640, 120);
+                vrHudCtx.globalAlpha = 1;
 
                 if (message) {
-                    vrHudCtx.fillStyle = '#ffaa00';
-                    vrHudCtx.font = 'bold 28px Courier New';
-                    vrHudCtx.fillText(message, 640, 160);
+                    vrHudCtx.textAlign = 'center';
+                    vrHudCtx.fillStyle = 'rgba(255, 180, 0, 0.78)';
+                    vrHudCtx.font = 'bold 24px Courier New';
+                    vrHudCtx.fillText(message, hudCanvas.width / 2, 170);
                 }
 
                 drawMinimap();
@@ -601,41 +657,41 @@
             }
 
             function drawMinimap() {
-                const mapSize = 190;
-                const offsetX = hudCanvas.width - mapSize - 26;
-                const offsetY = 16;
+                const mapSize = 176;
+                const offsetX = hudCanvas.width - mapSize - 28;
+                const offsetY = hudCanvas.height - mapSize - 24;
                 const cellW = mapSize / GRID_SIZE;
                 const cellH = mapSize / GRID_SIZE;
 
-                vrHudCtx.fillStyle = 'rgba(0, 10, 0, 0.72)';
+                vrHudCtx.fillStyle = 'rgba(0, 10, 0, 0.46)';
                 vrHudCtx.fillRect(offsetX, offsetY, mapSize, mapSize);
-                vrHudCtx.strokeStyle = '#0f0';
+                vrHudCtx.strokeStyle = 'rgba(0,255,0,0.50)';
                 vrHudCtx.lineWidth = 2;
                 vrHudCtx.strokeRect(offsetX, offsetY, mapSize, mapSize);
 
                 for (let z = 0; z < GRID_SIZE; z++) {
                     for (let x = 0; x < GRID_SIZE; x++) {
                         if (mapGrid[z] && mapGrid[z][x] === 1) {
-                            vrHudCtx.fillStyle = '#005500';
+                            vrHudCtx.fillStyle = 'rgba(0, 120, 0, 0.45)';
                             vrHudCtx.fillRect(offsetX + x * cellW, offsetY + z * cellH, cellW + 1, cellH + 1);
                         } else if (mapGrid[z] && mapGrid[z][x] === 2) {
-                            vrHudCtx.fillStyle = '#aaaa00';
+                            vrHudCtx.fillStyle = 'rgba(255,255,0,0.56)';
                             vrHudCtx.fillRect(offsetX + x * cellW, offsetY + z * cellH, cellW, cellH);
                         }
                     }
                 }
 
-                vrHudCtx.fillStyle = '#ffffff';
+                vrHudCtx.fillStyle = 'rgba(255,255,255,0.90)';
                 vrHudCtx.beginPath();
                 vrHudCtx.arc(offsetX + (playerDolly.position.x / TILE_SIZE) * cellW, offsetY + (playerDolly.position.z / TILE_SIZE) * cellH, 4.5, 0, Math.PI * 2);
                 vrHudCtx.fill();
 
-                vrHudCtx.fillStyle = '#ff0000';
+                vrHudCtx.fillStyle = 'rgba(255,0,0,0.82)';
                 enemies.forEach(e => {
                     vrHudCtx.fillRect(offsetX + (e.mesh.position.x / TILE_SIZE) * cellW - 3, offsetY + (e.mesh.position.z / TILE_SIZE) * cellH - 3, 6, 6);
                 });
 
-                vrHudCtx.fillStyle = '#00ffff';
+                vrHudCtx.fillStyle = 'rgba(0,255,255,0.82)';
                 pickups.forEach(p => {
                     vrHudCtx.fillRect(offsetX + (p.mesh.position.x / TILE_SIZE) * cellW - 2, offsetY + (p.mesh.position.z / TILE_SIZE) * cellH - 2, 4, 4);
                 });
@@ -870,7 +926,13 @@
 
             // --- OLEADAS ---
             function startRoomWave(path) {
-                const config = getWaveConfig(path);
+                const rawConfig = getWaveConfig(path);
+                const config = {
+                    ...rawConfig,
+                    total: Math.ceil(rawConfig.total * 2),
+                    maxAlive: Math.ceil(rawConfig.maxAlive * 1.65),
+                    spawnRate: Math.max(0.42, rawConfig.spawnRate * 0.85)
+                };
                 const now = clock.getElapsedTime();
                 activeWave = {
                     total: config.total,
@@ -1020,17 +1082,18 @@
                 const type = forcedType || choose(config.types);
                 const floating = Math.random() < (config.floatingChance || 0) || type === 'float';
                 const previewFloat = config.previewFloat && floating;
-                const actualType = previewFloat ? 'int' : type;
+                const actualType = previewFloat ? 'float' : type;
+
                 const spot = forcedPosition || getRandomSpawnSpot();
                 if (!spot) return;
 
-                const hp = rollEnemyLife(actualType, config.difficulty || 1, previewFloat);
-                const visual = createEnemyTextureState(actualType, hp, hp, floating, previewFloat, false);
-                const material = new THREE.MeshBasicMaterial({ map: visual.texture, color: 0xffffff });
-
+                const hp = rollEnemyHp(actualType, config.difficulty || 1, previewFloat);
+                const maxHp = hp;
+                const texture = makeEnemyTexture(actualType, hp, maxHp, floating, false, false);
+                const material = new THREE.MeshBasicMaterial({ map: texture, color: 0xffffff });
                 const size = actualType === 'string' ? 3.6 : 3.1;
                 const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), material);
-                const y = floating ? 3.3 + Math.random() * 1.2 : size / 2;
+                const y = floating ? 3.3 + Math.random() * 1.2 : 1.55;
                 mesh.position.set(spot.x * TILE_SIZE, y, spot.z * TILE_SIZE);
                 scene.add(mesh);
 
@@ -1038,16 +1101,11 @@
                     mesh,
                     material,
                     type: actualType,
-                    label: getEnemyTypeLabel(actualType, previewFloat),
+                    label: `${actualType}:${formatEnemyHp(actualType, hp)}`,
                     hp,
-                    maxHp: hp,
+                    maxHp,
                     floating,
                     previewFloat,
-                    canvas: visual.canvas,
-                    ctx: visual.ctx,
-                    texture: visual.texture,
-                    blinkUntil: 0,
-                    lastBlinkState: false,
                     bobOffset: Math.random() * Math.PI * 2,
                     box: new THREE.Box3().setFromObject(mesh),
                     speed: (floating ? 4.7 : 4.0) + Math.min(2.5, score * 0.04) + (config.difficulty || 1) * 0.2,
@@ -1057,113 +1115,28 @@
                 });
             }
 
-            function rollEnemyLife(type, difficulty, previewFloat = false) {
-                const d = Math.max(0, difficulty - 1);
-                const jitter = THREE.MathUtils.randFloat(-0.12, 0.22);
-
-                if (type === 'int' || previewFloat) {
-                    return Math.max(1, Math.round(1 + d * 0.58 + score * 0.008 + jitter));
-                }
-                if (type === 'float') {
-                    return Number(Math.max(0.8, 1 + d * 0.72 + score * 0.01 + THREE.MathUtils.randFloat(-0.1, 0.35)).toFixed(1));
-                }
-                if (type === 'string') {
-                    return Math.max(1, Math.round(1 + d * 0.66 + missionIndex * 0.45 + jitter));
-                }
-                if (type === 'bool') {
-                    return Math.max(1, Math.round(1 + d * 0.50 + missionIndex * 0.35 + jitter));
-                }
-                return Math.max(1, Math.round(1 + d + jitter));
-            }
-
-            function getEnemyTypeLabel(type, previewFloat = false) {
-                if (previewFloat) return 'FLOAT?';
-                if (type === 'int') return 'INT';
-                if (type === 'float') return 'FLOAT';
-                if (type === 'string') return 'STRING';
-                if (type === 'bool') return 'BOOL';
-                if (type === 'boss') return 'ROOT';
-                return 'VAR';
-            }
-
-            function createEnemyTextureState(type, hp, maxHp, floating, previewFloat, flash) {
-                const canvas = document.createElement('canvas');
-                canvas.width = 256;
-                canvas.height = 256;
-                const ctx = canvas.getContext('2d');
-                const texture = new THREE.CanvasTexture(canvas);
-                drawEnemyTexture({ type, hp, maxHp, floating, previewFloat, canvas, ctx, texture, isBoss: type === 'boss' }, flash);
-                return { canvas, ctx, texture };
-            }
-
-            function formatEnemyLife(enemy) {
-                const hp = Math.max(0, enemy.hp);
-                if (enemy.type === 'float') return hp.toFixed(1);
-                if (enemy.isBoss) return String(Math.ceil(hp));
-                return String(Math.ceil(hp));
-            }
-
-            function drawEnemyTexture(enemy, flash = false) {
-                if (!enemy.ctx || !enemy.canvas) return;
-                const ctx = enemy.ctx;
-                const canvas = enemy.canvas;
-                const color = enemy.isBoss ? 0xff3333 : (weaponColors[enemy.type] || 0xff0000);
-                const colorCss = '#' + color.toString(16).padStart(6, '0');
-
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = flash ? '#520000' : (enemy.previewFloat ? '#001a1a' : '#001100');
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                ctx.strokeStyle = flash ? '#ff0000' : colorCss;
-                ctx.lineWidth = flash ? 18 : 10;
-                ctx.strokeRect(7, 7, canvas.width - 14, canvas.height - 14);
-
-                ctx.fillStyle = flash ? '#ffdddd' : colorCss;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-
-                const typeLabel = enemy.label || getEnemyTypeLabel(enemy.type, enemy.previewFloat);
-                ctx.font = enemy.isBoss ? 'bold 28px Courier New' : 'bold 30px Courier New';
-                ctx.fillText(typeLabel, 128, enemy.isBoss ? 52 : 42);
-
-                const lifeText = formatEnemyLife(enemy);
-                ctx.font = lifeText.length > 4 ? 'bold 62px Courier New' : 'bold 82px Courier New';
-                ctx.fillText(lifeText, 128, 128);
-
-                ctx.font = 'bold 22px Courier New';
-                if (enemy.isBoss) {
-                    ctx.fillText('OVERLOAD', 128, 206);
-                } else {
-                    ctx.fillText(`HP/${formatMaxLife(enemy)}`, 128, 204);
-                }
-
-                if (enemy.floating && !enemy.isBoss) {
-                    ctx.font = 'bold 20px Courier New';
-                    ctx.fillText('FLOATING', 128, 230);
-                }
-                if (enemy.texture) enemy.texture.needsUpdate = true;
-            }
-
-            function formatMaxLife(enemy) {
-                if (enemy.type === 'float') return Number(enemy.maxHp).toFixed(1);
-                return String(Math.ceil(enemy.maxHp));
-            }
-
-            function updateEnemyDamageFlash(enemy, time) {
-                const flashing = time < (enemy.blinkUntil || 0) && Math.floor(time * 30) % 2 === 0;
-                if (enemy.lastBlinkState !== flashing) {
-                    enemy.lastBlinkState = flashing;
-                    drawEnemyTexture(enemy, flashing);
-                }
-            }
-
             function spawnBoss() {
                 finalBossSpawned = true;
                 const cx = Math.floor(GRID_SIZE / 2);
                 const spot = { x: cx, z: 2 };
-                const hp = 120;
-                const visual = createEnemyTextureState('boss', hp, hp, true, false, false);
-                const material = new THREE.MeshBasicMaterial({ map: visual.texture, color: 0xffffff });
+                const canvas = document.createElement('canvas');
+                canvas.width = 512;
+                canvas.height = 512;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#210000';
+                ctx.fillRect(0, 0, 512, 512);
+                ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth = 20;
+                ctx.strokeRect(0, 0, 512, 512);
+                ctx.fillStyle = '#ff4444';
+                ctx.font = 'bold 56px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText('VARIABLE', 256, 210);
+                ctx.fillText('OVERLOAD', 256, 292);
+                ctx.font = 'bold 32px Courier New';
+                ctx.fillText('ROOT PROCESS', 256, 366);
+
+                const material = new THREE.MeshBasicMaterial({ map: makeEnemyTexture('boss', 120, 120, true, false, true), color: 0xffffff });
                 const mesh = new THREE.Mesh(new THREE.BoxGeometry(7, 7, 7), material);
                 mesh.position.set(spot.x * TILE_SIZE, 4.2, spot.z * TILE_SIZE);
                 scene.add(mesh);
@@ -1172,16 +1145,10 @@
                     mesh,
                     material,
                     type: 'boss',
-                    label: 'ROOT PROCESS',
-                    hp,
-                    maxHp: hp,
+                    label: 'Variable Overload',
+                    hp: 120,
+                    maxHp: 120,
                     floating: true,
-                    previewFloat: false,
-                    canvas: visual.canvas,
-                    ctx: visual.ctx,
-                    texture: visual.texture,
-                    blinkUntil: 0,
-                    lastBlinkState: false,
                     bobOffset: 0,
                     box: new THREE.Box3().setFromObject(mesh),
                     speed: 2.3,
@@ -1210,6 +1177,69 @@
                 return arr[Math.floor(Math.random() * arr.length)];
             }
 
+            function formatEnemyHp(type, hp) {
+                const value = Math.max(0, hp);
+                if (type === 'boss') return String(Math.ceil(value));
+                if (type === 'int' || type === 'bool') return value >= 10 ? String(Math.ceil(value)) : value.toFixed(1);
+                return value >= 10 ? value.toFixed(1) : value.toFixed(2);
+            }
+
+            function rollEnemyHp(type, difficulty, previewFloat = false) {
+                const jitter = THREE.MathUtils.randFloat(0.88, 1.24);
+                let hp;
+                if (type === 'int') {
+                    hp = THREE.MathUtils.randFloat(0.95, 1.35) + Math.max(0, difficulty - 1) * 0.55;
+                } else if (type === 'float') {
+                    hp = THREE.MathUtils.randFloat(1.05, 1.55) + Math.max(0, difficulty - 1) * 0.72;
+                    if (previewFloat) hp += 0.35;
+                } else if (type === 'string') {
+                    hp = THREE.MathUtils.randFloat(1.25, 1.85) + Math.max(0, difficulty - 1) * 0.66;
+                } else if (type === 'bool') {
+                    hp = THREE.MathUtils.randFloat(1.05, 1.55) + Math.max(0, difficulty - 1) * 0.52;
+                } else {
+                    hp = THREE.MathUtils.randFloat(1.0, 1.6) * jitter;
+                }
+                return Math.max(0.5, Math.round(hp * jitter * 10) / 10);
+            }
+
+            function makeEnemyTexture(type, hp, maxHp, floating = false, flash = false, isBoss = false) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 256;
+                canvas.height = 256;
+                const ctx = canvas.getContext('2d');
+                const color = isBoss ? 0xff3333 : (weaponColors[type] || 0xff0000);
+                const colorCss = '#' + color.toString(16).padStart(6, '0');
+                ctx.fillStyle = flash ? '#330000' : (floating ? '#001a1a' : '#001100');
+                ctx.fillRect(0, 0, 256, 256);
+                ctx.strokeStyle = flash ? '#ff2222' : colorCss;
+                ctx.lineWidth = 12;
+                ctx.strokeRect(0, 0, 256, 256);
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = flash ? '#ff6666' : colorCss;
+                ctx.font = isBoss ? 'bold 50px Courier New' : 'bold 68px Courier New';
+                ctx.fillText(formatEnemyHp(type, hp), 128, isBoss ? 112 : 108);
+
+                ctx.font = 'bold 24px Courier New';
+                ctx.fillStyle = 'rgba(230,255,230,0.86)';
+                ctx.fillText(isBoss ? 'OVERLOAD' : type.toUpperCase(), 128, 170);
+                if (floating && !isBoss) {
+                    ctx.font = 'bold 20px Courier New';
+                    ctx.fillStyle = 'rgba(0,255,255,0.82)';
+                    ctx.fillText('FLOAT', 128, 204);
+                }
+                return new THREE.CanvasTexture(canvas);
+            }
+
+            function refreshEnemyTexture(enemy, flash = false) {
+                if (!enemy || !enemy.material) return;
+                const oldMap = enemy.material.map;
+                enemy.material.map = makeEnemyTexture(enemy.type, enemy.hp, enemy.maxHp, enemy.floating, flash, enemy.isBoss);
+                enemy.material.needsUpdate = true;
+                if (oldMap) oldMap.dispose();
+            }
+
             // --- PICKUPS / DROPS ---
             function spawnWeaponUpgrade(type) {
                 const cx = Math.floor(GRID_SIZE / 2);
@@ -1219,17 +1249,19 @@
 
             function maybeDropPickup(position) {
                 const roll = Math.random();
-                if (roll < 0.42) spawnPickup('ammo', position, null);
-                else if (roll < 0.62) spawnPickup('health', position, null);
-                else if (roll < 0.74) spawnPickup('rapid', position, null);
+                const dropPosition = position.clone();
+                const fallToGround = dropPosition.y > 1.25;
+                if (roll < 0.42) spawnPickup('ammo', dropPosition, null, { fallToGround });
+                else if (roll < 0.62) spawnPickup('health', dropPosition, null, { fallToGround });
+                else if (roll < 0.74) spawnPickup('rapid', dropPosition, null, { fallToGround });
             }
 
             function spawnRandomSupply() {
                 const spot = getRandomOpenSpotNearCenter();
                 if (!spot) return;
                 const type = Math.random() < 0.75 ? 'ammo' : (Math.random() < 0.6 ? 'health' : 'rapid');
-                spawnPickup(type, new THREE.Vector3(spot.x * TILE_SIZE, 1.1, spot.z * TILE_SIZE), null);
-                notifyTecGPT('TecGPT detecta recursos libres en esta habitación. Revisa el minimapa: aparecen como puntos cyan.');
+                spawnPickup(type, new THREE.Vector3(spot.x * TILE_SIZE, 0.9, spot.z * TILE_SIZE), null);
+                notifyTecGPT('Detecté recursos libres en esta habitación. Revisa el minimapa: aparecen como puntos cyan.');
             }
 
             function getRandomOpenSpotNearCenter() {
@@ -1242,25 +1274,45 @@
                 return candidates.length ? choose(candidates) : null;
             }
 
-            function spawnPickup(kind, position, payload) {
+            function spawnPickup(kind, position, payload, options = {}) {
                 const group = new THREE.Group();
                 const color = kind === 'ammo' ? 0x00ffff : kind === 'health' ? 0xff3333 : kind === 'rapid' ? 0xffffff : weaponColors[payload];
-                const mat = kind === 'weapon'
-                    ? new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.6 })
-                    : new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.9 });
-                const mesh = kind === 'weapon'
-                    ? new THREE.Mesh(new THREE.OctahedronGeometry(1.05, 0), mat)
-                    : new THREE.Mesh(new THREE.IcosahedronGeometry(0.75, 0), mat);
-                group.add(mesh);
+                const scale = 0.75;
+
+                let core;
+                if (kind === 'weapon') {
+                    const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.6 });
+                    core = new THREE.Mesh(new THREE.OctahedronGeometry(1.4, 0), mat);
+                } else {
+                    const geo = new THREE.IcosahedronGeometry(1.0, 0);
+                    const edges = new THREE.EdgesGeometry(geo);
+                    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 });
+                    core = new THREE.LineSegments(edges, mat);
+                }
+                core.scale.setScalar(scale);
+                group.add(core);
 
                 const labelText = kind === 'weapon' ? weaponNames[payload] : kind.toUpperCase();
                 const label = createFloatingLabel(labelText, color);
-                label.position.set(0, 1.35, 0);
+                label.scale.setScalar(0.78);
+                label.position.set(0, kind === 'weapon' ? 1.75 : 1.28, 0);
                 group.add(label);
 
+                const targetY = kind === 'weapon' ? 1.5 : 0.9;
                 group.position.copy(position);
+                if (!options.fallToGround && kind !== 'weapon') group.position.y = targetY;
                 scene.add(group);
-                pickups.push({ mesh: group, core: mesh, label, kind, payload, box: new THREE.Box3().setFromObject(group) });
+                pickups.push({
+                    mesh: group,
+                    core,
+                    label,
+                    kind,
+                    payload,
+                    box: new THREE.Box3().setFromObject(group),
+                    falling: Boolean(options.fallToGround && group.position.y > targetY),
+                    velocityY: 0,
+                    targetY
+                });
             }
 
             function createFloatingLabel(text, color) {
@@ -1268,11 +1320,13 @@
                 canvas.width = 512;
                 canvas.height = 128;
                 const ctx = canvas.getContext('2d');
-                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                ctx.fillStyle = 'rgba(0,0,0,0.42)';
                 ctx.fillRect(0, 0, 512, 128);
                 ctx.strokeStyle = '#' + color.toString(16).padStart(6, '0');
+                ctx.globalAlpha = 0.72;
                 ctx.lineWidth = 6;
                 ctx.strokeRect(4, 4, 504, 120);
+                ctx.globalAlpha = 1;
                 ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
                 ctx.font = 'bold 42px Courier New';
                 ctx.textAlign = 'center';
@@ -1280,7 +1334,7 @@
                 ctx.fillText(text, 256, 66);
 
                 const texture = new THREE.CanvasTexture(canvas);
-                const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false });
+                const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false, opacity: 0.78 });
                 const plane = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 1.1), material);
                 plane.renderOrder = 998;
                 return plane;
@@ -1291,6 +1345,17 @@
                     const p = pickups[i];
                     p.mesh.rotation.y += delta * 1.8;
                     p.core.rotation.x += delta * 2.2;
+
+                    if (p.falling) {
+                        p.velocityY -= 18 * delta;
+                        p.mesh.position.y += p.velocityY * delta;
+                        if (p.mesh.position.y <= p.targetY) {
+                            p.mesh.position.y = p.targetY;
+                            p.velocityY = 0;
+                            p.falling = false;
+                        }
+                    }
+
                     p.label.lookAt(camera.getWorldPosition(new THREE.Vector3()));
                     p.box.setFromObject(p.mesh);
 
@@ -1393,7 +1458,7 @@
                 if (!ctrl || !wpnMesh) return;
 
                 const now = clock.getElapsedTime();
-                const fireDelay = now < rapidFireUntil ? 0.12 : 0.48;
+                const fireDelay = now < rapidFireUntil ? 0.07 : 0.14;
                 if (ctrl.userData.nextShot && now < ctrl.userData.nextShot) return;
                 ctrl.userData.nextShot = now + fireDelay;
 
@@ -1492,12 +1557,14 @@
             function canDamageEnemy(weaponType, enemy) {
                 if (weaponType === 'auto') return true;
                 if (enemy.isBoss) return weaponType === 'auto';
+                if (weaponType === 'int' && enemy.type === 'float') return true;
                 return weaponType === enemy.type;
             }
 
             function getDamage(weaponType, enemy) {
                 if (enemy.isBoss) return weaponType === 'auto' ? 6 : 0;
-                if (weaponType === 'auto') return 4;
+                if (weaponType === 'auto') return 1.4;
+                if (weaponType === 'int' && enemy.type === 'float') return 0.1;
                 return 1;
             }
 
@@ -1508,19 +1575,24 @@
                     return;
                 }
 
-                enemy.hp = Math.max(0, enemy.hp - getDamage(weaponType, enemy));
-                enemy.blinkUntil = clock.getElapsedTime() + 0.32;
-                drawEnemyTexture(enemy, true);
+                const damage = getDamage(weaponType, enemy);
+                enemy.hp = Math.max(0, enemy.hp - damage);
+                enemy.material.color.setHex(0xff5555);
+                refreshEnemyTexture(enemy, true);
+                setTimeout(() => {
+                    if (enemy.material && enemies.includes(enemy)) {
+                        enemy.material.color.setHex(0xffffff);
+                        refreshEnemyTexture(enemy, false);
+                    }
+                }, 95);
 
                 if (enemy.hp <= 0) killEnemy(enemy, enemyIndex);
-                else {
-                    updateHUD(enemy.isBoss ? `BOSS HP: ${Math.ceil(enemy.hp)}/${enemy.maxHp}` : `HP ENEMIGO: ${formatEnemyLife(enemy)}`);
-                }
+                else if (enemy.isBoss) updateHUD(`BOSS HP: ${Math.ceil(enemy.hp)}/${enemy.maxHp}`);
             }
 
             function killEnemy(enemy, enemyIndex) {
                 enemy.deathTimer = 1.0;
-                drawEnemyTexture(enemy, true);
+                enemy.material.color.setHex(0xff0000);
                 dyingEnemies.push(enemy);
                 enemies.splice(enemyIndex, 1);
                 score++;
@@ -1580,7 +1652,6 @@
                 for (let i = enemies.length - 1; i >= 0; i--) {
                     const e = enemies[i];
                     e.attackCooldown = Math.max(0, e.attackCooldown - delta);
-                    updateEnemyDamageFlash(e, time);
 
                     if (e.floating) {
                         const targetY = e.isBoss ? 4.2 : 3.2;
@@ -1655,6 +1726,7 @@
                     if (distToPlayer < (e.isBoss ? 6.0 : 3.6) && e.attackCooldown <= 0 && isGameRunning) {
                         const damage = e.isBoss ? 24 : 10 + missionIndex * 2;
                         health -= damage;
+                        playPlayerDamageSound();
                         e.attackCooldown = e.isBoss ? 1.2 : 0.8;
 
                         if (health <= 0) {
@@ -1748,7 +1820,7 @@
                     if (dist < TILE_SIZE / 1.55) {
                         if (d.locked) {
                             if (doorWarningCooldown <= 0) {
-                                if (d.routeLocked) notifyTecGPT('Ruta no autorizada todavía. Sigue la ruta sugerida por TecGPT para no romper la campaña.');
+                                if (d.routeLocked) notifyTecGPT('Ruta no autorizada todavía. Sigue la ruta sugerida para no romper la campaña.');
                                 else notifyTecGPT('Puerta bloqueada. Limpia la oleada de esta habitación para desbloquear el directorio.');
                                 updateHUD(d.routeLocked ? 'RUTA BLOQUEADA' : 'OLEADA ACTIVA');
                                 doorWarningCooldown = 4.0;
@@ -1815,6 +1887,39 @@
                 gain.connect(audioCtx.destination);
                 osc.start(t);
                 osc.stop(t + 0.2);
+            }
+
+            function playPlayerDamageSound() {
+                ensureAudioContext();
+                const t = audioCtx.currentTime;
+
+                const thump = audioCtx.createOscillator();
+                const thumpGain = audioCtx.createGain();
+                thump.type = 'triangle';
+                thump.frequency.setValueAtTime(95, t);
+                thump.frequency.exponentialRampToValueAtTime(38, t + 0.22);
+                thumpGain.gain.setValueAtTime(0.7, t);
+                thumpGain.gain.exponentialRampToValueAtTime(0.01, t + 0.24);
+                thump.connect(thumpGain);
+                thumpGain.connect(audioCtx.destination);
+                thump.start(t);
+                thump.stop(t + 0.26);
+
+                const noiseBuffer = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * 0.12), audioCtx.sampleRate);
+                const data = noiseBuffer.getChannelData(0);
+                for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+                const noise = audioCtx.createBufferSource();
+                noise.buffer = noiseBuffer;
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = 520;
+                const gain = audioCtx.createGain();
+                gain.gain.setValueAtTime(0.36, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.14);
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                noise.start(t);
             }
 
             // --- PANTALLAS FINALES ---
