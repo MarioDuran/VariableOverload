@@ -220,6 +220,8 @@
             let audioCtx;
             let listener;
             let bgm;
+            let speechPrimed = false;
+            let preferredTecGPTVoice = null;
 
             init();
 
@@ -242,6 +244,8 @@
 
                 const vrButton = VRButton.createButton(renderer);
                 vrButton.addEventListener('click', () => {
+                    ensureAudioContext();
+                    primeTecGPTVoice();
                     document.getElementById('info').style.display = 'none';
                     if (!isGameRunning) startGame();
                 });
@@ -261,10 +265,10 @@
 
                 // HUD superior/inferior del visor.
                 const hudGeo = new THREE.PlaneGeometry(1.9, 0.48);
-                const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, depthTest: false });
+                const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, depthTest: false, opacity: 0.78 });
                 vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
                 vrHudMesh.renderOrder = 999;
-                vrHudMesh.position.set(0, 0.18, -1.25);
+                vrHudMesh.position.set(0, 0.08, -1.25);
                 vrHudMesh.rotation.x = -0.05;
                 camera.add(vrHudMesh);
 
@@ -294,6 +298,8 @@
                         rightWeaponMesh = createGunMesh();
                         rightController.add(rightWeaponMesh);
                         rightController.addEventListener('selectstart', () => {
+                            ensureAudioContext();
+                            primeTecGPTVoice();
                             rightController.userData.isSelecting = true;
                             fireWeapon(rightController, rightWeaponMesh);
                         });
@@ -303,6 +309,8 @@
                         leftWeaponMesh = createGunMesh();
                         leftController.add(leftWeaponMesh);
                         leftController.addEventListener('selectstart', () => {
+                            ensureAudioContext();
+                            primeTecGPTVoice();
                             leftController.userData.isSelecting = true;
                             fireWeapon(leftController, leftWeaponMesh);
                         });
@@ -317,6 +325,10 @@
                 const controller2 = renderer.xr.getController(1);
                 controller2.addEventListener('connected', onControllerConnected);
                 playerDolly.add(controller2);
+
+                if ('speechSynthesis' in window) {
+                    window.speechSynthesis.onvoiceschanged = () => primeTecGPTVoice();
+                }
 
                 buildBaseEnvironment();
                 updateHUD('SISTEMA EN ESPERA');
@@ -364,6 +376,8 @@
                 notificationQueue.length = 0;
                 activeNotification = null;
                 updateWeaponMaterial();
+                ensureAudioContext();
+                primeTecGPTVoice();
 
                 if (!bgm.isPlaying) {
                     const audioLoader = new THREE.AudioLoader();
@@ -406,14 +420,46 @@
                 if (activeNotification.speak) speakTecGPT(activeNotification.text);
             }
 
+            function primeTecGPTVoice() {
+                if (!('speechSynthesis' in window)) return;
+                try {
+                    window.speechSynthesis.resume();
+                    const voices = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+                    preferredTecGPTVoice = voices.find(v => /es[-_](MX|419|ES)/i.test(v.lang))
+                        || voices.find(v => /^es/i.test(v.lang))
+                        || voices[0]
+                        || null;
+
+                    // Algunos runtimes WebXR bloquean TTS hasta recibir un gesto de usuario.
+                    // Esta utterance silenciosa deja preparado el canal antes de las instrucciones reales.
+                    if (!speechPrimed) {
+                        const primer = new SpeechSynthesisUtterance(' ');
+                        primer.volume = 0;
+                        primer.lang = 'es-MX';
+                        if (preferredTecGPTVoice) primer.voice = preferredTecGPTVoice;
+                        window.speechSynthesis.speak(primer);
+                        speechPrimed = true;
+                    }
+                } catch (err) {}
+            }
+
             function speakTecGPT(text) {
                 if (!('speechSynthesis' in window)) return;
+                primeTecGPTVoice();
                 const utterance = new SpeechSynthesisUtterance(text);
-                utterance.lang = 'es-MX';
-                utterance.rate = 1.04;
-                utterance.pitch = 0.96;
+                utterance.lang = preferredTecGPTVoice ? preferredTecGPTVoice.lang : 'es-MX';
+                if (preferredTecGPTVoice) utterance.voice = preferredTecGPTVoice;
+                utterance.rate = 0.98;
+                utterance.pitch = 0.92;
+                utterance.volume = 1.0;
                 window.speechSynthesis.cancel();
-                window.speechSynthesis.speak(utterance);
+                window.speechSynthesis.resume();
+                setTimeout(() => {
+                    try {
+                        window.speechSynthesis.resume();
+                        window.speechSynthesis.speak(utterance);
+                    } catch (err) {}
+                }, 60);
             }
 
             function drawNotification(text) {
@@ -423,7 +469,7 @@
                     return;
                 }
 
-                notificationCtx.fillStyle = 'rgba(0, 20, 10, 0.92)';
+                notificationCtx.fillStyle = 'rgba(0, 20, 10, 0.68)';
                 roundRect(notificationCtx, 24, 24, 1152, 212, 28, true, false);
                 notificationCtx.strokeStyle = '#00ffaa';
                 notificationCtx.lineWidth = 8;
@@ -460,7 +506,7 @@
                 }
 
                 notificationMesh.position.y = y;
-                notificationMesh.material.opacity = THREE.MathUtils.clamp(alpha, 0, 1);
+                notificationMesh.material.opacity = THREE.MathUtils.clamp(alpha * 0.82, 0, 0.82);
 
                 if (elapsed > duration) startNextNotification();
             }
@@ -505,6 +551,8 @@
             // --- HUD ---
             function updateHUD(message = '') {
                 vrHudCtx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
+                vrHudCtx.fillStyle = 'rgba(0, 18, 6, 0.34)';
+                roundRect(vrHudCtx, 8, 8, hudCanvas.width - 16, 188, 18, true, false);
 
                 const currentWeapon = unlockedWeapons[currentWeaponIndex] || 'int';
                 const colorHex = '#' + weaponColors[currentWeapon].toString(16).padStart(6, '0');
@@ -973,56 +1021,33 @@
                 const floating = Math.random() < (config.floatingChance || 0) || type === 'float';
                 const previewFloat = config.previewFloat && floating;
                 const actualType = previewFloat ? 'int' : type;
-                const label = previewFloat ? choose(['3.14f', '2.71f', 'NaNf']) : choose(typeLabels[actualType] || ['var']);
-
                 const spot = forcedPosition || getRandomSpawnSpot();
                 if (!spot) return;
 
-                const canvas = document.createElement('canvas');
-                canvas.width = 256;
-                canvas.height = 256;
-                const ctx = canvas.getContext('2d');
-                const color = weaponColors[actualType] || 0xff0000;
-                const colorCss = '#' + color.toString(16).padStart(6, '0');
-                ctx.fillStyle = previewFloat ? '#001a1a' : '#001100';
-                ctx.fillRect(0, 0, 256, 256);
-                ctx.strokeStyle = colorCss;
-                ctx.lineWidth = 10;
-                ctx.strokeRect(0, 0, 256, 256);
-                ctx.fillStyle = colorCss;
-                ctx.font = label.length > 6 ? 'bold 34px Courier New' : 'bold 46px Courier New';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(label, 128, 122);
-                if (floating) {
-                    ctx.font = 'bold 24px Courier New';
-                    ctx.fillText('FLOATING', 128, 186);
-                }
+                const hp = rollEnemyLife(actualType, config.difficulty || 1, previewFloat);
+                const visual = createEnemyTextureState(actualType, hp, hp, floating, previewFloat, false);
+                const material = new THREE.MeshBasicMaterial({ map: visual.texture, color: 0xffffff });
 
-                const material = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), color: 0xffffff });
                 const size = actualType === 'string' ? 3.6 : 3.1;
                 const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), material);
-                const y = floating ? 3.3 + Math.random() * 1.2 : 1.55;
+                const y = floating ? 3.3 + Math.random() * 1.2 : size / 2;
                 mesh.position.set(spot.x * TILE_SIZE, y, spot.z * TILE_SIZE);
                 scene.add(mesh);
-
-                const hpBase = {
-                    int: previewFloat ? 2 : 1,
-                    float: 3,
-                    string: 4,
-                    bool: 2,
-                    boss: 90
-                }[actualType] || 1;
 
                 enemies.push({
                     mesh,
                     material,
                     type: actualType,
-                    label,
-                    hp: Math.ceil(hpBase * (config.difficulty || 1)),
-                    maxHp: Math.ceil(hpBase * (config.difficulty || 1)),
+                    label: getEnemyTypeLabel(actualType, previewFloat),
+                    hp,
+                    maxHp: hp,
                     floating,
                     previewFloat,
+                    canvas: visual.canvas,
+                    ctx: visual.ctx,
+                    texture: visual.texture,
+                    blinkUntil: 0,
+                    lastBlinkState: false,
                     bobOffset: Math.random() * Math.PI * 2,
                     box: new THREE.Box3().setFromObject(mesh),
                     speed: (floating ? 4.7 : 4.0) + Math.min(2.5, score * 0.04) + (config.difficulty || 1) * 0.2,
@@ -1032,28 +1057,113 @@
                 });
             }
 
+            function rollEnemyLife(type, difficulty, previewFloat = false) {
+                const d = Math.max(0, difficulty - 1);
+                const jitter = THREE.MathUtils.randFloat(-0.12, 0.22);
+
+                if (type === 'int' || previewFloat) {
+                    return Math.max(1, Math.round(1 + d * 0.58 + score * 0.008 + jitter));
+                }
+                if (type === 'float') {
+                    return Number(Math.max(0.8, 1 + d * 0.72 + score * 0.01 + THREE.MathUtils.randFloat(-0.1, 0.35)).toFixed(1));
+                }
+                if (type === 'string') {
+                    return Math.max(1, Math.round(1 + d * 0.66 + missionIndex * 0.45 + jitter));
+                }
+                if (type === 'bool') {
+                    return Math.max(1, Math.round(1 + d * 0.50 + missionIndex * 0.35 + jitter));
+                }
+                return Math.max(1, Math.round(1 + d + jitter));
+            }
+
+            function getEnemyTypeLabel(type, previewFloat = false) {
+                if (previewFloat) return 'FLOAT?';
+                if (type === 'int') return 'INT';
+                if (type === 'float') return 'FLOAT';
+                if (type === 'string') return 'STRING';
+                if (type === 'bool') return 'BOOL';
+                if (type === 'boss') return 'ROOT';
+                return 'VAR';
+            }
+
+            function createEnemyTextureState(type, hp, maxHp, floating, previewFloat, flash) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 256;
+                canvas.height = 256;
+                const ctx = canvas.getContext('2d');
+                const texture = new THREE.CanvasTexture(canvas);
+                drawEnemyTexture({ type, hp, maxHp, floating, previewFloat, canvas, ctx, texture, isBoss: type === 'boss' }, flash);
+                return { canvas, ctx, texture };
+            }
+
+            function formatEnemyLife(enemy) {
+                const hp = Math.max(0, enemy.hp);
+                if (enemy.type === 'float') return hp.toFixed(1);
+                if (enemy.isBoss) return String(Math.ceil(hp));
+                return String(Math.ceil(hp));
+            }
+
+            function drawEnemyTexture(enemy, flash = false) {
+                if (!enemy.ctx || !enemy.canvas) return;
+                const ctx = enemy.ctx;
+                const canvas = enemy.canvas;
+                const color = enemy.isBoss ? 0xff3333 : (weaponColors[enemy.type] || 0xff0000);
+                const colorCss = '#' + color.toString(16).padStart(6, '0');
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = flash ? '#520000' : (enemy.previewFloat ? '#001a1a' : '#001100');
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.strokeStyle = flash ? '#ff0000' : colorCss;
+                ctx.lineWidth = flash ? 18 : 10;
+                ctx.strokeRect(7, 7, canvas.width - 14, canvas.height - 14);
+
+                ctx.fillStyle = flash ? '#ffdddd' : colorCss;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                const typeLabel = enemy.label || getEnemyTypeLabel(enemy.type, enemy.previewFloat);
+                ctx.font = enemy.isBoss ? 'bold 28px Courier New' : 'bold 30px Courier New';
+                ctx.fillText(typeLabel, 128, enemy.isBoss ? 52 : 42);
+
+                const lifeText = formatEnemyLife(enemy);
+                ctx.font = lifeText.length > 4 ? 'bold 62px Courier New' : 'bold 82px Courier New';
+                ctx.fillText(lifeText, 128, 128);
+
+                ctx.font = 'bold 22px Courier New';
+                if (enemy.isBoss) {
+                    ctx.fillText('OVERLOAD', 128, 206);
+                } else {
+                    ctx.fillText(`HP/${formatMaxLife(enemy)}`, 128, 204);
+                }
+
+                if (enemy.floating && !enemy.isBoss) {
+                    ctx.font = 'bold 20px Courier New';
+                    ctx.fillText('FLOATING', 128, 230);
+                }
+                if (enemy.texture) enemy.texture.needsUpdate = true;
+            }
+
+            function formatMaxLife(enemy) {
+                if (enemy.type === 'float') return Number(enemy.maxHp).toFixed(1);
+                return String(Math.ceil(enemy.maxHp));
+            }
+
+            function updateEnemyDamageFlash(enemy, time) {
+                const flashing = time < (enemy.blinkUntil || 0) && Math.floor(time * 30) % 2 === 0;
+                if (enemy.lastBlinkState !== flashing) {
+                    enemy.lastBlinkState = flashing;
+                    drawEnemyTexture(enemy, flashing);
+                }
+            }
+
             function spawnBoss() {
                 finalBossSpawned = true;
                 const cx = Math.floor(GRID_SIZE / 2);
                 const spot = { x: cx, z: 2 };
-                const canvas = document.createElement('canvas');
-                canvas.width = 512;
-                canvas.height = 512;
-                const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#210000';
-                ctx.fillRect(0, 0, 512, 512);
-                ctx.strokeStyle = '#ff0000';
-                ctx.lineWidth = 20;
-                ctx.strokeRect(0, 0, 512, 512);
-                ctx.fillStyle = '#ff4444';
-                ctx.font = 'bold 56px Courier New';
-                ctx.textAlign = 'center';
-                ctx.fillText('VARIABLE', 256, 210);
-                ctx.fillText('OVERLOAD', 256, 292);
-                ctx.font = 'bold 32px Courier New';
-                ctx.fillText('ROOT PROCESS', 256, 366);
-
-                const material = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), color: 0xffffff });
+                const hp = 120;
+                const visual = createEnemyTextureState('boss', hp, hp, true, false, false);
+                const material = new THREE.MeshBasicMaterial({ map: visual.texture, color: 0xffffff });
                 const mesh = new THREE.Mesh(new THREE.BoxGeometry(7, 7, 7), material);
                 mesh.position.set(spot.x * TILE_SIZE, 4.2, spot.z * TILE_SIZE);
                 scene.add(mesh);
@@ -1062,10 +1172,16 @@
                     mesh,
                     material,
                     type: 'boss',
-                    label: 'Variable Overload',
-                    hp: 120,
-                    maxHp: 120,
+                    label: 'ROOT PROCESS',
+                    hp,
+                    maxHp: hp,
                     floating: true,
+                    previewFloat: false,
+                    canvas: visual.canvas,
+                    ctx: visual.ctx,
+                    texture: visual.texture,
+                    blinkUntil: 0,
+                    lastBlinkState: false,
                     bobOffset: 0,
                     box: new THREE.Box3().setFromObject(mesh),
                     speed: 2.3,
@@ -1129,15 +1245,17 @@
             function spawnPickup(kind, position, payload) {
                 const group = new THREE.Group();
                 const color = kind === 'ammo' ? 0x00ffff : kind === 'health' ? 0xff3333 : kind === 'rapid' ? 0xffffff : weaponColors[payload];
-                const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.6 });
+                const mat = kind === 'weapon'
+                    ? new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.6 })
+                    : new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.9 });
                 const mesh = kind === 'weapon'
-                    ? new THREE.Mesh(new THREE.OctahedronGeometry(1.4, 0), mat)
-                    : new THREE.Mesh(new THREE.IcosahedronGeometry(1.0, 0), mat);
+                    ? new THREE.Mesh(new THREE.OctahedronGeometry(1.05, 0), mat)
+                    : new THREE.Mesh(new THREE.IcosahedronGeometry(0.75, 0), mat);
                 group.add(mesh);
 
                 const labelText = kind === 'weapon' ? weaponNames[payload] : kind.toUpperCase();
                 const label = createFloatingLabel(labelText, color);
-                label.position.set(0, 1.8, 0);
+                label.position.set(0, 1.35, 0);
                 group.add(label);
 
                 group.position.copy(position);
@@ -1275,7 +1393,7 @@
                 if (!ctrl || !wpnMesh) return;
 
                 const now = clock.getElapsedTime();
-                const fireDelay = now < rapidFireUntil ? 0.11 : 0.28;
+                const fireDelay = now < rapidFireUntil ? 0.12 : 0.48;
                 if (ctrl.userData.nextShot && now < ctrl.userData.nextShot) return;
                 ctrl.userData.nextShot = now + fireDelay;
 
@@ -1309,7 +1427,7 @@
                 laser.lookAt(startPos.clone().add(direction));
                 scene.add(laser);
 
-                lasers.push({ mesh: laser, dir: direction, speed: 78, type, box: new THREE.Box3() });
+                lasers.push({ mesh: laser, dir: direction, speed: 101.4, type, box: new THREE.Box3() });
             }
 
             function reloadWeapon() {
@@ -1390,17 +1508,19 @@
                     return;
                 }
 
-                enemy.hp -= getDamage(weaponType, enemy);
-                enemy.material.color.setHex(0xff5555);
-                setTimeout(() => enemy.material && enemy.material.color.setHex(0xffffff), 90);
+                enemy.hp = Math.max(0, enemy.hp - getDamage(weaponType, enemy));
+                enemy.blinkUntil = clock.getElapsedTime() + 0.32;
+                drawEnemyTexture(enemy, true);
 
                 if (enemy.hp <= 0) killEnemy(enemy, enemyIndex);
-                else if (enemy.isBoss) updateHUD(`BOSS HP: ${Math.ceil(enemy.hp)}/${enemy.maxHp}`);
+                else {
+                    updateHUD(enemy.isBoss ? `BOSS HP: ${Math.ceil(enemy.hp)}/${enemy.maxHp}` : `HP ENEMIGO: ${formatEnemyLife(enemy)}`);
+                }
             }
 
             function killEnemy(enemy, enemyIndex) {
                 enemy.deathTimer = 1.0;
-                enemy.material.color.setHex(0xff0000);
+                drawEnemyTexture(enemy, true);
                 dyingEnemies.push(enemy);
                 enemies.splice(enemyIndex, 1);
                 score++;
@@ -1460,6 +1580,7 @@
                 for (let i = enemies.length - 1; i >= 0; i--) {
                     const e = enemies[i];
                     e.attackCooldown = Math.max(0, e.attackCooldown - delta);
+                    updateEnemyDamageFlash(e, time);
 
                     if (e.floating) {
                         const targetY = e.isBoss ? 4.2 : 3.2;
