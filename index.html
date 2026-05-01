@@ -38,7 +38,6 @@
         #error-log { color: #ff0000; font-weight: bold; margin-top: 20px; }
     </style>
     
-    <!-- 1. MAPA DE IMPORTACIÓN MODERNO (ES MODULES) -->
     <script type="importmap">
         {
             "imports": {
@@ -53,20 +52,19 @@
         <h1>UNIX DOOM VR</h1>
         <p>> Conéctate desde tu Meta Quest Pro.</p>
         <p>> <b>Mando Izquierdo:</b> Joystick para moverte. Gira la muñeca para ver Salud/Munición.</p>
-        <p>> <b>Mando Derecho:</b> Gatillo para disparar. Joystick Izq/Der para cambiar el tipo de datos (Arma).</p>
+        <p>> <b>Mando Derecho:</b> Gatillo (Índice) para disparar. Joystick Izq/Der para cambiar de arma.</p>
         <p>> Dispara al tipo correcto para matar procesos corruptos.</p>
         <div id="error-log"></div>
     </div>
 
     <div id="game-container"></div>
 
-    <!-- 2. SCRIPT TIPO MODULE -->
     <script type="module">
         import * as THREE from 'three';
         import { VRButton } from 'three/addons/webxr/VRButton.js';
 
         try {
-            // --- VARIABLES GLOBALES Y SISTEMA DE ARCHIVOS ---
+            // --- VARIABLES GLOBALES ---
             const fsTree = {
                 "/": ["bin", "etc", "home", "var"],
                 "/bin": ["bash", "ls"], "/etc": ["ssh", "config"],
@@ -75,7 +73,9 @@
             };
 
             let camera, scene, renderer;
-            let playerDolly, controller1, controller2;
+            let playerDolly;
+            let rightController = null;
+            let leftController = null;
             
             let health = 100;
             let score = 0;
@@ -100,14 +100,17 @@
             let mapGrid = [];
             const TILE_SIZE = 10;
             const GRID_SIZE = 15;
-            let walls = [], doors = [], enemies = [], pickups = [], lasers = [];
+            let walls = [], doors = [], enemies = [], lasers = [];
             let spawnInterval;
 
             const clock = new THREE.Clock();
 
-            // Spatial UI (HUD en la muñeca)
-            let vrHudCtx, vrHudTex, vrHudMesh;
-            let weaponMesh, weaponMat;
+            // Canvas global para asegurar que no falle antes de cargar mandos
+            const hudCanvas = document.createElement('canvas');
+            hudCanvas.width = 512; hudCanvas.height = 256;
+            const vrHudCtx = hudCanvas.getContext('2d');
+            const vrHudTex = new THREE.CanvasTexture(hudCanvas);
+            let vrHudMesh, weaponMesh, weaponMat;
 
             init();
 
@@ -122,14 +125,12 @@
                 const ambientLight = new THREE.AmbientLight(0x006600);
                 scene.add(ambientLight);
 
-                // RENDERER & VR
                 renderer = new THREE.WebGLRenderer({ antialias: true });
                 renderer.setPixelRatio(window.devicePixelRatio);
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 renderer.xr.enabled = true;
                 document.getElementById('game-container').appendChild(renderer.domElement);
                 
-                // CREAR BOTÓN VR Y AGREGARLO AL BODY
                 const vrButton = VRButton.createButton(renderer);
                 vrButton.addEventListener('click', () => {
                     document.getElementById('info').style.display = 'none';
@@ -137,36 +138,51 @@
                 });
                 document.body.appendChild(vrButton);
 
-                // PLAYER DOLLY
                 playerDolly = new THREE.Group();
                 scene.add(playerDolly);
                 playerDolly.add(camera);
 
-                // CONTROLADORES VR
-                controller1 = renderer.xr.getController(0); 
-                controller1.addEventListener('selectstart', onTriggerDown);
+                // --- SISTEMA DE MANDOS MEJORADO ---
+                const onControllerConnected = (event) => {
+                    const controller = event.target;
+                    const handedness = event.data.handedness;
+
+                    if (handedness === 'right') {
+                        rightController = controller;
+                        buildRightController(rightController);
+                        // Asegurar el evento de disparo al gatillo del mando derecho
+                        rightController.addEventListener('selectstart', onTriggerDown); 
+                    } else if (handedness === 'left') {
+                        leftController = controller;
+                        buildLeftController(leftController);
+                    }
+                };
+
+                const controller1 = renderer.xr.getController(0);
+                controller1.addEventListener('connected', onControllerConnected);
                 playerDolly.add(controller1);
 
-                controller2 = renderer.xr.getController(1); 
+                const controller2 = renderer.xr.getController(1);
+                controller2.addEventListener('connected', onControllerConnected);
                 playerDolly.add(controller2);
 
-                buildControllers();
                 buildEnvironment();
+                updateHUD("SISTEMA INICIADO");
 
                 window.addEventListener('resize', onWindowResize);
-                
                 renderer.setAnimationLoop(animate);
             }
 
-            function buildControllers() {
-                // LÁSER Y ARMA (Mano Derecha)
+            function buildRightController(ctrl) {
+                // Láser
                 const laserGeo = new THREE.BufferGeometry().setFromPoints([
                     new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -50)
                 ]);
                 const laserMat = new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
                 const aimLine = new THREE.Line(laserGeo, laserMat);
-                controller1.add(aimLine);
+                ctrl.add(aimLine);
 
+                // Modelo del Arma
                 weaponMesh = new THREE.Group();
                 const gunDarkMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
                 weaponMat = new THREE.MeshLambertMaterial({ color: weaponColors['int'], emissive: weaponColors['int'], emissiveIntensity: 0.8 });
@@ -178,23 +194,17 @@
                 
                 weaponMesh.position.set(0, -0.05, -0.1);
                 weaponMesh.rotation.x = -Math.PI / 6;
-                controller1.add(weaponMesh);
+                ctrl.add(weaponMesh);
+            }
 
-                // HUD (Mano Izquierda)
-                const canvas = document.createElement('canvas');
-                canvas.width = 512; canvas.height = 256;
-                vrHudCtx = canvas.getContext('2d');
-                vrHudTex = new THREE.CanvasTexture(canvas);
-                
+            function buildLeftController(ctrl) {
                 const hudGeo = new THREE.PlaneGeometry(0.2, 0.1);
                 const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, side: THREE.DoubleSide });
                 vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
                 
                 vrHudMesh.position.set(0, 0.05, -0.1);
                 vrHudMesh.rotation.x = -Math.PI / 4;
-                controller2.add(vrHudMesh);
-
-                updateHUD();
+                ctrl.add(vrHudMesh);
             }
 
             function buildEnvironment() {
@@ -348,7 +358,8 @@
             }
 
             function onTriggerDown() {
-                if (!isGameRunning || isReloading) return;
+                if (!isGameRunning || isReloading || !rightController) return;
+                
                 if (clipAmmo <= 0) {
                     isReloading = true; updateHUD("> RECARGANDO...");
                     setTimeout(() => { 
@@ -359,7 +370,7 @@
 
                 clipAmmo--; updateHUD();
 
-                const matrix = new THREE.Matrix4().extractRotation(controller1.matrixWorld);
+                const matrix = new THREE.Matrix4().extractRotation(rightController.matrixWorld);
                 const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(matrix);
                 
                 const startPos = new THREE.Vector3();
@@ -381,8 +392,10 @@
                 if(currentWeaponIndex >= weaponTypes.length) currentWeaponIndex = 0;
                 if(currentWeaponIndex < 0) currentWeaponIndex = weaponTypes.length - 1;
                 
-                const hex = weaponColors[weaponTypes[currentWeaponIndex]];
-                weaponMat.color.setHex(hex); weaponMat.emissive.setHex(hex);
+                if (weaponMat) {
+                    const hex = weaponColors[weaponTypes[currentWeaponIndex]];
+                    weaponMat.color.setHex(hex); weaponMat.emissive.setHex(hex);
+                }
                 updateHUD();
             }
 
@@ -402,11 +415,23 @@
 
                     for (const source of session.inputSources) {
                         if (source.gamepad) {
+                            
+                            // Lectura robusta de los Joysticks (Evitar bugs con valor 0)
+                            let axX = 0, axY = 0;
+                            if (source.gamepad.axes.length >= 4) {
+                                axX = source.gamepad.axes[2]; // Meta Quest X
+                                axY = source.gamepad.axes[3]; // Meta Quest Y
+                            } else if (source.gamepad.axes.length >= 2) {
+                                axX = source.gamepad.axes[0];
+                                axY = source.gamepad.axes[1];
+                            }
+
+                            // Zona muerta (Deadzone) para evitar que la cámara se mueva sola
+                            if (Math.abs(axX) < 0.2) axX = 0;
+                            if (Math.abs(axY) < 0.2) axY = 0;
+
                             if (source.handedness === 'left') {
-                                const axX = source.gamepad.axes[2] || source.gamepad.axes[0] || 0;
-                                const axY = source.gamepad.axes[3] || source.gamepad.axes[1] || 0;
-                                
-                                if (Math.abs(axX) > 0.1 || Math.abs(axY) > 0.1) {
+                                if (axX !== 0 || axY !== 0) {
                                     const moveSpeed = 10 * delta;
                                     const fwDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
                                     fwDir.y = 0; fwDir.normalize();
@@ -422,8 +447,8 @@
                                     }
                                 }
                             }
+                            
                             if (source.handedness === 'right' && weaponSwitchCooldown <= 0) {
-                                const axX = source.gamepad.axes[2] || source.gamepad.axes[0] || 0;
                                 if (axX > 0.5) { switchWeapon(1); weaponSwitchCooldown = 0.5; }
                                 else if (axX < -0.5) { switchWeapon(-1); weaponSwitchCooldown = 0.5; }
                             }
@@ -431,12 +456,14 @@
                     }
                 }
 
+                // Colisiones de puertas
                 for(let d of doors) {
                     if (playerDolly.position.distanceTo(d.mesh.position) < TILE_SIZE / 1.5) {
                         loadDirectory(d.targetPath); break;
                     }
                 }
 
+                // Físicas de láseres
                 for (let i = lasers.length - 1; i >= 0; i--) {
                     let l = lasers[i];
                     l.mesh.position.addScaledVector(l.dir, l.speed * delta);
@@ -464,6 +491,7 @@
                     }
                 }
 
+                // Movimiento Enemigos
                 for (let i = enemies.length - 1; i >= 0; i--) {
                     let e = enemies[i];
                     e.mesh.lookAt(playerDolly.position.x, e.mesh.position.y, playerDolly.position.z);
