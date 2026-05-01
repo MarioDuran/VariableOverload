@@ -80,7 +80,6 @@
             let isGameOver = false;
             let isGameRunning = false;
 
-            // Stamina y Munición
             let stamina = 100;
             const MAX_STAMINA = 100;
             
@@ -105,21 +104,19 @@
             let walls = [], wallMeshes = [], doors = [], enemies = [], dyingEnemies = [], lasers = [];
             let spawnInterval;
 
-            // Pathfinding y UI Loop
             let flowField = Array(GRID_SIZE).fill().map(() => Array(GRID_SIZE).fill(9999));
             let lastFlowFieldUpdate = 0;
             let lastHudUpdate = 0;
 
             const clock = new THREE.Clock();
 
-            // Interfaz Principal (Casco/Visor)
+            // HUD Flotante Despejado
             const hudCanvas = document.createElement('canvas');
             hudCanvas.width = 1024; hudCanvas.height = 256;
             const vrHudCtx = hudCanvas.getContext('2d');
             const vrHudTex = new THREE.CanvasTexture(hudCanvas);
             let vrHudMesh, weaponMesh, weaponMat, gameOverMesh;
 
-            // Audio
             let audioCtx;
             let listener;
             let bgm;
@@ -137,7 +134,7 @@
                 const ambientLight = new THREE.AmbientLight(0x00aa00, 1.2); 
                 scene.add(ambientLight);
 
-                renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
                 renderer.setPixelRatio(window.devicePixelRatio);
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 renderer.xr.enabled = true;
@@ -150,6 +147,7 @@
                 });
                 document.body.appendChild(vrButton);
 
+                // Sistema de Locomoción y Giro
                 playerDolly = new THREE.Group();
                 scene.add(playerDolly);
                 playerDolly.add(camera);
@@ -162,19 +160,18 @@
                 camera.add(listener);
                 bgm = new THREE.Audio(listener);
 
-                // --- CREACIÓN DEL HUD DE VISOR ESTÁTICO ---
-                const hudGeo = new THREE.PlaneGeometry(0.8, 0.2); // Ancho x Alto
+                // HUD Visor (Arriba)
+                const hudGeo = new THREE.PlaneGeometry(1.6, 0.4); 
                 const hudMat = new THREE.MeshBasicMaterial({ 
                     map: vrHudTex, 
                     transparent: true, 
-                    depthTest: false // Se dibuja sobre TODO (incluso las paredes)
+                    depthTest: false 
                 });
                 vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
                 vrHudMesh.renderOrder = 999;
                 
-                // Colocarlo debajo del centro de visión (mirando un poco hacia arriba)
-                vrHudMesh.position.set(0, -0.35, -0.8);
-                vrHudMesh.rotation.x = -Math.PI / 10;
+                // Moverlo a la parte superior de la vista
+                vrHudMesh.position.set(0, 0.5, -1.2);
                 camera.add(vrHudMesh);
 
                 // MANDOS
@@ -234,13 +231,6 @@
             }
 
             function buildRightController(ctrl) {
-                const laserGeo = new THREE.BufferGeometry().setFromPoints([
-                    new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -50)
-                ]);
-                const laserMat = new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
-                const aimLine = new THREE.Line(laserGeo, laserMat);
-                ctrl.add(aimLine);
-
                 weaponMesh = new THREE.Group();
                 const gunDarkMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
                 weaponMat = new THREE.MeshLambertMaterial({ color: weaponColors['int'], emissive: weaponColors['int'], emissiveIntensity: 0.8 });
@@ -249,9 +239,18 @@
                 const core = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.03, 0.15), weaponMat);
                 core.position.set(0, 0.06, -0.05);
                 weaponMesh.add(body); weaponMesh.add(core);
+
+                // LÁSER (Añadido DIRECTAMENTE al arma para alineación perfecta)
+                const laserGeo = new THREE.BufferGeometry().setFromPoints([
+                    new THREE.Vector3(0, 0.06, 0), new THREE.Vector3(0, 0.06, -50)
+                ]);
+                const laserMat = new THREE.LineBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
+                const aimLine = new THREE.Line(laserGeo, laserMat);
+                weaponMesh.add(aimLine); 
                 
+                // Rotar el arma para que se sienta natural en la mano VR (apuntando levemente hacia abajo)
                 weaponMesh.position.set(0, -0.05, -0.1);
-                weaponMesh.rotation.x = -Math.PI / 6;
+                weaponMesh.rotation.x = -Math.PI / 8;
                 ctrl.add(weaponMesh);
             }
 
@@ -268,85 +267,85 @@
                 scene.add(ceiling);
             }
 
-            // --- ACTUALIZACIÓN DE INTERFAZ ESTÁTICA Y RADAR ---
             function updateHUD(message = "") {
+                // Borrar todo el lienzo (Totalmente transparente)
                 vrHudCtx.clearRect(0, 0, 1024, 256);
-                
-                // Fondo semi-transparente
-                vrHudCtx.fillStyle = 'rgba(0, 15, 0, 0.85)';
-                vrHudCtx.fillRect(0, 0, 1024, 256);
-                
-                // Marcos (768 para Datos, 256 para Minimapa)
-                vrHudCtx.strokeStyle = '#' + weaponColors[weaponTypes[currentWeaponIndex]].toString(16).padStart(6,'0');
-                vrHudCtx.lineWidth = 6;
-                vrHudCtx.strokeRect(0, 0, 768, 256); 
-                vrHudCtx.strokeRect(768, 0, 256, 256);
 
-                // --- SECCIÓN IZQUIERDA (Estadísticas) ---
-                vrHudCtx.fillStyle = '#0f0';
-                vrHudCtx.font = 'bold 38px Courier New';
-                vrHudCtx.fillText(`HP: ${health}%`, 20, 55);
-                vrHudCtx.fillText(`KILLS: ${score}`, 400, 55);
+                // --- 1. SUPERIOR IZQUIERDA: Arma y Munición ---
+                vrHudCtx.textAlign = 'left';
+                vrHudCtx.fillStyle = '#' + weaponColors[weaponTypes[currentWeaponIndex]].toString(16).padStart(6,'0');
+                vrHudCtx.font = 'bold 36px Courier New';
+                vrHudCtx.fillText(`[ ${weaponTypes[currentWeaponIndex].toUpperCase()} ]`, 20, 40);
                 
                 vrHudCtx.fillStyle = '#0ff';
-                vrHudCtx.fillText(`AMMO: ${clipAmmo} / ${reserveAmmo}`, 20, 110);
+                vrHudCtx.font = 'bold 28px Courier New';
+                vrHudCtx.fillText(`AMMO: ${clipAmmo}/${reserveAmmo}`, 20, 80);
 
-                // BARRA DE STAMINA Larga
+                // --- 2. SUPERIOR CENTRO: Salud y Stamina ---
+                vrHudCtx.textAlign = 'center';
+                vrHudCtx.fillStyle = '#0f0';
+                vrHudCtx.font = 'bold 34px Courier New';
+                vrHudCtx.fillText(`HP: ${health}%  |  KILLS: ${score}`, 512, 40);
+
+                // Barra de Stamina Centrada
+                const barWidth = 350;
+                const barX = 512 - (barWidth / 2);
                 vrHudCtx.fillStyle = '#004400';
-                vrHudCtx.fillRect(20, 130, 700, 20);
+                vrHudCtx.fillRect(barX, 60, barWidth, 15);
                 vrHudCtx.fillStyle = stamina > 20 ? '#0f0' : '#ff0000';
-                vrHudCtx.fillRect(20, 130, (stamina / MAX_STAMINA) * 700, 20);
-
-                vrHudCtx.fillStyle = vrHudCtx.strokeStyle;
-                vrHudCtx.fillText(`ARMA: [${weaponTypes[currentWeaponIndex].toUpperCase()}]`, 20, 200);
+                vrHudCtx.fillRect(barX, 60, (stamina / MAX_STAMINA) * barWidth, 15);
 
                 if(message) {
                     vrHudCtx.fillStyle = '#ffaa00';
-                    vrHudCtx.font = 'bold 30px Courier New';
-                    vrHudCtx.fillText(message, 350, 200);
+                    vrHudCtx.font = 'bold 26px Courier New';
+                    vrHudCtx.fillText(message, 512, 110);
                 }
 
-                // --- SECCIÓN DERECHA (Minimapa Dinámico) ---
-                const mapSize = 256;
-                const offsetX = 768;
+                // --- 3. SUPERIOR DERECHA: Minimapa ---
+                const mapSize = 160;
+                const offsetX = 1024 - mapSize - 20;
+                const offsetY = 10;
                 const cellW = mapSize / GRID_SIZE;
                 const cellH = mapSize / GRID_SIZE;
 
-                vrHudCtx.fillStyle = '#000500';
-                vrHudCtx.fillRect(offsetX, 0, mapSize, mapSize);
+                // Fondo para que el mapa se distinga bien
+                vrHudCtx.fillStyle = 'rgba(0, 10, 0, 0.7)';
+                vrHudCtx.fillRect(offsetX, offsetY, mapSize, mapSize);
+                vrHudCtx.strokeStyle = '#0f0';
+                vrHudCtx.lineWidth = 2;
+                vrHudCtx.strokeRect(offsetX, offsetY, mapSize, mapSize);
 
                 for(let z=0; z<GRID_SIZE; z++){
                     for(let x=0; x<GRID_SIZE; x++){
                         if(mapGrid[z] && mapGrid[z][x] === 1){
                             vrHudCtx.fillStyle = '#005500';
-                            vrHudCtx.fillRect(offsetX + x*cellW, z*cellH, cellW+1, cellH+1); 
+                            vrHudCtx.fillRect(offsetX + x*cellW, offsetY + z*cellH, cellW+1, cellH+1); 
                         } else if (mapGrid[z] && mapGrid[z][x] === 2) {
-                            vrHudCtx.fillStyle = '#aaaa00'; // Puertas (Amarillo)
-                            vrHudCtx.fillRect(offsetX + x*cellW, z*cellH, cellW, cellH);
+                            vrHudCtx.fillStyle = '#aaaa00';
+                            vrHudCtx.fillRect(offsetX + x*cellW, offsetY + z*cellH, cellW, cellH);
                         }
                     }
                 }
 
-                // Dibujar Jugador
+                // Jugador
                 let px = (playerDolly.position.x / TILE_SIZE) * cellW;
                 let pz = (playerDolly.position.z / TILE_SIZE) * cellH;
                 vrHudCtx.fillStyle = '#ffffff';
                 vrHudCtx.beginPath();
-                vrHudCtx.arc(offsetX + px, pz, 5, 0, Math.PI*2);
+                vrHudCtx.arc(offsetX + px, offsetY + pz, 4, 0, Math.PI*2);
                 vrHudCtx.fill();
 
-                // Dibujar Enemigos
+                // Enemigos
                 vrHudCtx.fillStyle = '#ff0000';
                 enemies.forEach(e => {
                     let ex = (e.mesh.position.x / TILE_SIZE) * cellW;
                     let ez = (e.mesh.position.z / TILE_SIZE) * cellH;
-                    vrHudCtx.fillRect(offsetX + ex - 3, ez - 3, 6, 6);
+                    vrHudCtx.fillRect(offsetX + ex - 3, offsetY + ez - 3, 6, 6);
                 });
 
                 vrHudTex.needsUpdate = true;
             }
 
-            // --- LÓGICA DE GAME OVER Y REINICIO ---
             function showGameOverScreen() {
                 isGameOver = true;
                 isGameRunning = false;
@@ -383,7 +382,7 @@
                 
                 gameOverMesh = new THREE.Mesh(goGeo, goMat);
                 gameOverMesh.renderOrder = 1000; 
-                gameOverMesh.position.set(0, 0, -1.5); // Justo frente a los ojos
+                gameOverMesh.position.set(0, 0, -1.5); 
                 camera.add(gameOverMesh);
             }
 
@@ -543,15 +542,14 @@
             function onTriggerDown() {
                 if (!rightController) return;
 
-                const matrix = new THREE.Matrix4().extractRotation(rightController.matrixWorld);
+                // Extraer la dirección de disparo DIRECTAMENTE de la Matrix del Arma
+                const matrix = new THREE.Matrix4().extractRotation(weaponMesh.matrixWorld);
                 const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(matrix);
                 const startPos = new THREE.Vector3();
+                weaponMesh.getWorldPosition(startPos);
                 
                 // Si el jugador está muerto, se usa el disparo como botón
                 if (isGameOver && gameOverMesh) {
-                    rightController.getWorldPosition(startPos);
-                    
-                    // Láser visual momentáneo rojo para confirmar el disparo a la pantalla
                     const tempLaser = new THREE.Mesh(
                         new THREE.CylinderGeometry(0.02, 0.02, 5, 8).rotateX(Math.PI/2),
                         new THREE.MeshBasicMaterial({ color: 0xff0000 })
@@ -562,7 +560,7 @@
                     setTimeout(() => scene.remove(tempLaser), 150);
                     playShootSound();
 
-                    // Detectar si impactó el botón de Restart
+                    // Detectar impacto en Pantalla Restart
                     const ray = new THREE.Raycaster(startPos, direction);
                     const hits = ray.intersectObject(gameOverMesh);
                     if (hits.length > 0) {
@@ -584,7 +582,6 @@
                 clipAmmo--; updateHUD();
                 playShootSound();
                 
-                weaponMesh.getWorldPosition(startPos);
                 const laser = new THREE.Mesh(
                     new THREE.CylinderGeometry(0.05, 0.05, 1.5, 8).rotateX(Math.PI/2),
                     new THREE.MeshBasicMaterial({ color: weaponColors[weaponTypes[currentWeaponIndex]] })
@@ -596,10 +593,9 @@
                 lasers.push({ mesh: laser, dir: direction, speed: 70, type: weaponTypes[currentWeaponIndex], box: new THREE.Box3() });
             }
 
-            function switchWeapon(dir) {
-                currentWeaponIndex += dir;
+            function switchWeapon() {
+                currentWeaponIndex += 1;
                 if(currentWeaponIndex >= weaponTypes.length) currentWeaponIndex = 0;
-                if(currentWeaponIndex < 0) currentWeaponIndex = weaponTypes.length - 1;
                 
                 if (weaponMat) {
                     const hex = weaponColors[weaponTypes[currentWeaponIndex]];
@@ -643,6 +639,7 @@
                             if (Math.abs(axY) < 0.2) axY = 0;
 
                             if (source.handedness === 'left') {
+                                // MOVIMIENTO
                                 let isSprinting = false;
                                 if (source.gamepad.buttons[0] && source.gamepad.buttons[0].pressed && stamina > 0) {
                                     isSprinting = true;
@@ -655,12 +652,20 @@
 
                                 if (axX !== 0 || axY !== 0) {
                                     const moveSpeed = (isSprinting && stamina > 0 ? 11 : 6) * delta;
-                                    const fwDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-                                    fwDir.y = 0; fwDir.normalize();
+                                    
+                                    // Dirección de movimiento relativa a dónde mira la cámara!
+                                    const fwDir = new THREE.Vector3();
+                                    camera.getWorldDirection(fwDir);
+                                    fwDir.y = 0; 
+                                    fwDir.normalize();
                                     const rtDir = new THREE.Vector3().copy(fwDir).cross(camera.up).normalize();
 
-                                    const px = playerDolly.position.x + (-axY * fwDir.x + axX * rtDir.x) * moveSpeed;
-                                    const pz = playerDolly.position.z + (-axY * fwDir.z + axX * rtDir.z) * moveSpeed;
+                                    const moveVec = new THREE.Vector3();
+                                    moveVec.addScaledVector(fwDir, -axY * moveSpeed);
+                                    moveVec.addScaledVector(rtDir, axX * moveSpeed);
+
+                                    const px = playerDolly.position.x + moveVec.x;
+                                    const pz = playerDolly.position.z + moveVec.z;
                                     
                                     const pBox = new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(px, 1, pz), new THREE.Vector3(2,2,2));
                                     if(!walls.some(w => pBox.intersectsBox(w.box))) {
@@ -670,28 +675,37 @@
                                 }
                             }
                             
-                            if (source.handedness === 'right' && weaponSwitchCooldown <= 0) {
-                                if (axX > 0.5) { switchWeapon(1); weaponSwitchCooldown = 0.5; }
-                                else if (axX < -0.5) { switchWeapon(-1); weaponSwitchCooldown = 0.5; }
+                            if (source.handedness === 'right') {
+                                // ROTACIÓN DE CÁMARA (Giro Suave)
+                                if (axX !== 0) {
+                                    playerDolly.rotation.y -= axX * 2.5 * delta;
+                                }
+
+                                // CAMBIO DE ARMA (Botón A / B o presionar Joystick adentro)
+                                const aPressed = source.gamepad.buttons[4] && source.gamepad.buttons[4].pressed;
+                                const bPressed = source.gamepad.buttons[5] && source.gamepad.buttons[5].pressed;
+                                const thumbPressed = source.gamepad.buttons[3] && source.gamepad.buttons[3].pressed;
+
+                                if ((aPressed || bPressed || thumbPressed) && weaponSwitchCooldown <= 0) {
+                                    switchWeapon(); 
+                                    weaponSwitchCooldown = 0.5;
+                                }
                             }
                         }
                     }
                 }
 
-                // Refresco Dinámico de HUD (Minimapa) 10 veces por segundo
                 if (time - lastHudUpdate > 0.1) {
                     updateHUD();
                     lastHudUpdate = time;
                 }
 
-                // Puertas / Cambio Nivel
                 for(let d of doors) {
                     if (playerDolly.position.distanceTo(d.mesh.position) < TILE_SIZE / 1.5) {
                         loadDirectory(d.targetPath); break;
                     }
                 }
 
-                // Proyectiles
                 for (let i = lasers.length - 1; i >= 0; i--) {
                     let l = lasers[i];
                     l.mesh.position.addScaledVector(l.dir, l.speed * delta);
@@ -722,7 +736,6 @@
                     }
                 }
 
-                // Enemigos Muriendo
                 for (let i = dyingEnemies.length - 1; i >= 0; i--) {
                     const e = dyingEnemies[i];
                     e.deathTimer -= delta * 2;
@@ -736,7 +749,6 @@
                     }
                 }
 
-                // Inteligencia Enemiga (Pathfinding)
                 if (time - lastFlowFieldUpdate > 0.3) {
                     let px = Math.floor(playerDolly.position.x / TILE_SIZE);
                     let pz = Math.floor(playerDolly.position.z / TILE_SIZE);
@@ -800,7 +812,6 @@
                     e.box.setFromObject(e.mesh);
                     if (walls.some(w => e.box.intersectsBox(w.box))) e.mesh.position.z = prevZ;
 
-                    // Choque / Daño
                     if (distToPlayer < 3.5 && isGameRunning) {
                         health -= 15; 
                         
