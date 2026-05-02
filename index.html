@@ -52,11 +52,7 @@
 </head>
 <body>
     <div id="info">
-        <h1>START</h1>
-        <p>↓ Pulsa ENTER VR abajo ↓</p>
-        <p><b>Mando Izq:</b> Joystick mover | Grip correr | Gatillo disparar</p>
-        <p><b>Mando Der:</b> Joystick cambiar arma | Gatillo disparar</p>
-        <p>Campaña: enteros → flotantes → strings → booleanos → auto tipado.</p>
+        <h1>START.<br>VARIABLE OVERLOAD.</h1>
         <div id="error-log"></div>
     </div>
 
@@ -117,7 +113,7 @@
             ];
 
             const TECGPT_VOICE_LINES = [
-                { fileBase: 'voice1', text: 'Boss, te encuentras en el home del servidor.' },
+                { fileBase: 'voice1', text: '¡Boss, soy tu asistente TecGPT, te encuentras en el directorio home del servidor.!' },
                 { fileBase: 'voice2', text: 'Ha sido infectado por el virus Variable Overload. De momento todo parece manejable porque son puras variables de tipo entero. Utiliza tu pistola ARC para eliminarlas.' },
                 { fileBase: 'voice3', text: 'Mi sistema de conteo de referencias me indica que el virus está en la ruta /home/hacker/payloads/float_heap. Ve y elimina el virus.' },
                 { fileBase: 'voice4', text: 'Detecto firmas de tipo FLOAT en esta sala. Hay un upgrade ARC-FLOAT cerca: recógelo antes de aguantar la oleada.' },
@@ -137,7 +133,10 @@
                 { fileBase: 'voice18', text: 'Puerta bloqueada. Limpia la oleada de esta habitación para desbloquear el directorio.' },
                 { fileBase: 'voice19', text: 'Ruta no autorizada todavía. Sigue la ruta sugerida para eliminar el virus.' },
                 { fileBase: 'voice20', text: 'Detecté recursos libres en esta habitación. Revisa el minimapa: aparecen como puntos verdes.' },
-                { fileBase: 'voice21', text: 'Directorio limpio. Las puertas vuelven a estar disponibles.' }
+                { fileBase: 'voice21', text: 'Directorio limpio. Las puertas vuelven a estar disponibles.' },
+                { fileBase: 'voice22', text: '¡Boss, detrás de ti!' },
+                { fileBase: 'voice23', text: '¡Boss, ¿estás bien? No me aparece tu ubicación, Boss ¡por favor, responde!' },
+                { fileBase: 'voice24', text: '¡Preparate, ahí vienen!' }
             ];
 
             const allWeaponTypes = ['int', 'float', 'string', 'bool', 'auto'];
@@ -223,6 +222,10 @@
             let nextRandomSupplyTime = 0;
             let doorWarningCooldown = 0;
             let resourcesHintShown = false;
+            let isDirectoryTransitioning = false;
+            let loadingMesh = null;
+            let lastBehindWarningTime = -999;
+            let playerDeathVoiceQueued = false;
 
             const clock = new THREE.Clock();
 
@@ -308,6 +311,9 @@
                 camera.add(notificationMesh);
                 drawNotification('');
 
+                loadingMesh = createLoadingScreenMesh();
+                camera.add(loadingMesh);
+
                 weaponMat = new THREE.MeshLambertMaterial({
                     color: weaponColors.int,
                     emissive: weaponColors.int,
@@ -370,6 +376,60 @@
                 scene.add(ceiling);
             }
 
+            function createLoadingScreenMesh() {
+                const canvas = document.createElement('canvas');
+                canvas.width = 1024;
+                canvas.height = 512;
+                const ctx = canvas.getContext('2d');
+                const tex = new THREE.CanvasTexture(canvas);
+                const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 });
+                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 0.88), mat);
+                mesh.renderOrder = 1002;
+                mesh.position.set(0, -0.02, -1.05);
+                mesh.userData.ctx = ctx;
+                mesh.userData.tex = tex;
+                return mesh;
+            }
+
+            function showLoadingScreen(targetPath) {
+                if (!loadingMesh) return;
+                const ctx = loadingMesh.userData.ctx;
+                const tex = loadingMesh.userData.tex;
+                ctx.clearRect(0, 0, 1024, 512);
+                ctx.fillStyle = 'rgba(0, 8, 0, 0.88)';
+                ctx.fillRect(0, 0, 1024, 512);
+                ctx.strokeStyle = 'rgba(0, 255, 120, 0.86)';
+                ctx.lineWidth = 10;
+                ctx.strokeRect(26, 26, 972, 460);
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#00ff88';
+                ctx.font = 'bold 78px Courier New';
+                ctx.fillText('CARGANDO', 512, 198);
+                ctx.fillStyle = '#aaffcc';
+                ctx.font = 'bold 38px Courier New';
+                ctx.fillText(targetPath, 512, 282);
+                ctx.fillStyle = '#66ffaa';
+                ctx.font = 'bold 28px Courier New';
+                ctx.fillText('sincronizando directorio...', 512, 356);
+                tex.needsUpdate = true;
+                loadingMesh.material.opacity = 0.95;
+            }
+
+            function hideLoadingScreen() {
+                if (loadingMesh) loadingMesh.material.opacity = 0;
+            }
+
+            function beginDirectoryTransition(targetPath) {
+                if (isDirectoryTransitioning) return;
+                isDirectoryTransitioning = true;
+                showLoadingScreen(targetPath);
+                setTimeout(() => {
+                    loadDirectory(targetPath);
+                    hideLoadingScreen();
+                    isDirectoryTransitioning = false;
+                }, 650);
+            }
+
             function startGame() {
                 if (gameOverMesh) {
                     camera.remove(gameOverMesh);
@@ -388,6 +448,10 @@
                 rightGripWasPressed = false;
                 rightStickWeaponAxisWasActive = false;
                 resourcesHintShown = false;
+                isDirectoryTransitioning = false;
+                lastBehindWarningTime = -999;
+                playerDeathVoiceQueued = false;
+                if (loadingMesh) loadingMesh.material.opacity = 0;
                 unlockedWeapons = ['int'];
                 currentWeaponIndex = 0;
                 missionIndex = 0;
@@ -411,7 +475,7 @@
 
                 loadDirectory('/');
 
-                notifyTecGPT('Boss, te encuentras en el home del servidor.');
+                notifyTecGPT('¡Boss, soy tu asistente TecGPT, te encuentras en el directorio home del servidor.!');
                 notifyTecGPT('Ha sido infectado por el virus Variable Overload. De momento todo parece manejable porque son puras variables de tipo entero. Utiliza tu pistola ARC para eliminarlas.');
                 notifyTecGPT(missions[0].intro);
             }
@@ -684,16 +748,16 @@
                 vrHudCtx.textAlign = 'center';
                 vrHudCtx.fillStyle = colorHex;
                 vrHudCtx.font = 'bold 34px Courier New';
-                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 440, 246);
+                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 440, 264);
 
                 vrHudCtx.fillStyle = 'rgba(0, 255, 255, 0.88)';
                 vrHudCtx.font = 'bold 28px Courier New';
-                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 440, 286);
+                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 440, 304);
 
                 if (clock.getElapsedTime() < rapidFireUntil) {
                     vrHudCtx.fillStyle = 'rgba(255, 255, 255, 0.92)';
                     vrHudCtx.font = 'bold 24px Courier New';
-                    vrHudCtx.fillText('RAPID FIRE', 440, 316);
+                    vrHudCtx.fillText('RAPID FIRE', 440, 318);
                 }
 
                 drawMinimap();
@@ -703,7 +767,7 @@
             function drawMinimap() {
                 const mapSize = 128;
                 const offsetX = 776;
-                const offsetY = 182;
+                const offsetY = 190;
                 const cellW = mapSize / GRID_SIZE;
                 const cellH = mapSize / GRID_SIZE;
 
@@ -1019,6 +1083,7 @@
                 };
                 getRoomState(path).started = true;
                 updateDoorLockStates();
+                notifyTecGPT('¡Preparate, ahí vienen!');
                 updateHUD('OLEADA INICIADA');
             }
 
@@ -1266,10 +1331,10 @@
                 const hp = actualType === 'string' ? stringValue.length : makeEnemyHp(actualType, config.difficulty || 1, isClassBoss);
                 const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
                 const floating = actualType === 'float';
-                const width = isClassBoss ? 3.6 : (actualType === 'string' ? 3.6 : 3.1);
-                const height = isClassBoss ? 6.4 : (actualType === 'string' ? 3.6 : 3.1);
-                const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, width), material);
-                const y = floating ? (isClassBoss ? 4.8 : 3.3 + Math.random() * 1.2) : height / 2;
+                const baseSize = actualType === 'string' ? 3.6 : 3.1;
+                const size = isClassBoss ? 5.2 : baseSize;
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), material);
+                const y = floating ? (isClassBoss ? 4.8 : 3.3 + Math.random() * 1.2) : size / 2;
                 mesh.position.set(spot.x * TILE_SIZE, y, spot.z * TILE_SIZE);
 
                 const enemy = {
@@ -1803,6 +1868,7 @@
 
                     const dirToPlayer = new THREE.Vector3().subVectors(playerDolly.position, e.mesh.position);
                     const distToPlayer = dirToPlayer.length();
+                    maybeWarnEnemyBehind(e, distToPlayer, time);
                     const directDir = dirToPlayer.clone();
                     directDir.y = 0;
                     if (directDir.length() > 0) directDir.normalize();
@@ -1822,6 +1888,10 @@
                         e.attackCooldown = e.isBoss ? 1.2 : 0.8;
 
                         if (health <= 0) {
+                            if (!playerDeathVoiceQueued) {
+                                playerDeathVoiceQueued = true;
+                                notifyTecGPT('¡Boss, ¿estás bien? No me aparece tu ubicación, Boss ¡por favor, responde!');
+                            }
                             showEndScreen('KERNEL PANIC', `SCORE FINAL: ${score}`, '#ff0000');
                         } else {
                             updateHUD('¡SISTEMA DAÑADO!');
@@ -1830,6 +1900,27 @@
                         e.mesh.position.addScaledVector(directDir, -4.5);
                         e.box.setFromObject(e.mesh);
                     }
+                }
+            }
+
+            function maybeWarnEnemyBehind(enemy, distToPlayer, time) {
+                if (!isGameRunning || isGameOver || distToPlayer > 11 || distToPlayer < 3.8) return;
+                if (time - lastBehindWarningTime < 9.0) return;
+
+                const forward = new THREE.Vector3();
+                camera.getWorldDirection(forward);
+                forward.y = 0;
+                if (forward.lengthSq() < 0.01) return;
+                forward.normalize();
+
+                const toEnemy = new THREE.Vector3().subVectors(enemy.mesh.position, playerDolly.position);
+                toEnemy.y = 0;
+                if (toEnemy.lengthSq() < 0.01) return;
+                toEnemy.normalize();
+
+                if (forward.dot(toEnemy) < -0.58) {
+                    lastBehindWarningTime = time;
+                    notifyTecGPT('¡Boss, detrás de ti!');
                 }
             }
 
@@ -1932,10 +2023,10 @@
             }
 
             function getEnemyCollisionBox(enemy) {
-                const size = enemy.isFinalBoss ? 5.4 : (enemy.isBoss ? 2.7 : 1.9);
-                const height = enemy.isFinalBoss ? 6.8 : (enemy.isBoss ? 5.9 : 2.2);
+                const size = enemy.isFinalBoss ? 5.4 : (enemy.isBoss ? 4.7 : 1.9);
+                const height = enemy.isFinalBoss ? 6.8 : (enemy.isBoss ? 5.2 : 2.2);
                 return new THREE.Box3().setFromCenterAndSize(
-                    new THREE.Vector3(enemy.mesh.position.x, enemy.isFinalBoss ? 3.4 : (enemy.isBoss ? 3.0 : 1.25), enemy.mesh.position.z),
+                    new THREE.Vector3(enemy.mesh.position.x, enemy.isFinalBoss ? 3.4 : (enemy.isBoss ? 2.6 : 1.25), enemy.mesh.position.z),
                     new THREE.Vector3(size, height, size)
                 );
             }
@@ -2041,6 +2132,7 @@
             }
 
             function updateDoorTransitions() {
+                if (isDirectoryTransitioning) return;
                 for (const d of doors) {
                     const dist = playerDolly.position.distanceTo(d.mesh.position);
                     if (dist < TILE_SIZE / 1.55) {
@@ -2053,7 +2145,7 @@
                             }
                         } else {
                             playDoorOpenSound();
-                            loadDirectory(d.targetPath);
+                            beginDirectoryTransition(d.targetPath);
                             break;
                         }
                     }
@@ -2148,6 +2240,11 @@
                 const time = clock.getElapsedTime();
 
                 updateNotification();
+
+                if (isDirectoryTransitioning) {
+                    renderer.render(scene, camera);
+                    return;
+                }
 
                 if (!isGameRunning) {
                     renderer.render(scene, camera);
