@@ -184,7 +184,7 @@
             let clipAmmo = 36;
             const MAX_CLIP = 36;
             let reserveAmmo = 84;
-            const MAX_RESERVE = 180;
+            const MAX_RESERVE = 300;
             let isReloading = false;
             let rapidFireUntil = 0;
 
@@ -383,9 +383,10 @@
                 const ctx = canvas.getContext('2d');
                 const tex = new THREE.CanvasTexture(canvas);
                 const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 });
-                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 0.88), mat);
-                mesh.renderOrder = 1002;
-                mesh.position.set(0, -0.02, -1.05);
+                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 1.7), mat);
+                // Se dibuja detrás del HUD y de TecGPT para oscurecer solo el mundo.
+                mesh.renderOrder = 900;
+                mesh.position.set(0, 0.0, -1.08);
                 mesh.userData.ctx = ctx;
                 mesh.userData.tex = tex;
                 return mesh;
@@ -396,23 +397,15 @@
                 const ctx = loadingMesh.userData.ctx;
                 const tex = loadingMesh.userData.tex;
                 ctx.clearRect(0, 0, 1024, 512);
-                ctx.fillStyle = 'rgba(0, 8, 0, 0.88)';
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.86)';
                 ctx.fillRect(0, 0, 1024, 512);
-                ctx.strokeStyle = 'rgba(0, 255, 120, 0.86)';
-                ctx.lineWidth = 10;
-                ctx.strokeRect(26, 26, 972, 460);
                 ctx.textAlign = 'center';
-                ctx.fillStyle = '#00ff88';
-                ctx.font = 'bold 78px Courier New';
-                ctx.fillText('CARGANDO', 512, 198);
-                ctx.fillStyle = '#aaffcc';
-                ctx.font = 'bold 38px Courier New';
-                ctx.fillText(targetPath, 512, 282);
-                ctx.fillStyle = '#66ffaa';
-                ctx.font = 'bold 28px Courier New';
-                ctx.fillText('sincronizando directorio...', 512, 356);
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = 'rgba(0, 255, 140, 0.92)';
+                ctx.font = 'bold 74px Courier New';
+                ctx.fillText('Cargando', 512, 256);
                 tex.needsUpdate = true;
-                loadingMesh.material.opacity = 0.95;
+                loadingMesh.material.opacity = 1.0;
             }
 
             function hideLoadingScreen() {
@@ -748,16 +741,16 @@
                 vrHudCtx.textAlign = 'center';
                 vrHudCtx.fillStyle = colorHex;
                 vrHudCtx.font = 'bold 34px Courier New';
-                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 440, 264);
+                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 440, 286);
 
                 vrHudCtx.fillStyle = 'rgba(0, 255, 255, 0.88)';
                 vrHudCtx.font = 'bold 28px Courier New';
-                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 440, 304);
+                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 440, 318);
 
                 if (clock.getElapsedTime() < rapidFireUntil) {
                     vrHudCtx.fillStyle = 'rgba(255, 255, 255, 0.92)';
                     vrHudCtx.font = 'bold 24px Courier New';
-                    vrHudCtx.fillText('RAPID FIRE', 440, 318);
+                    vrHudCtx.fillText('RAPID FIRE', 440, 298);
                 }
 
                 drawMinimap();
@@ -767,7 +760,7 @@
             function drawMinimap() {
                 const mapSize = 128;
                 const offsetX = 776;
-                const offsetY = 190;
+                const offsetY = hudCanvas.height - mapSize;
                 const cellW = mapSize / GRID_SIZE;
                 const cellH = mapSize / GRID_SIZE;
 
@@ -1083,7 +1076,7 @@
                 };
                 getRoomState(path).started = true;
                 updateDoorLockStates();
-                notifyTecGPT('¡Preparate, ahí vienen!');
+                if (path !== '/') notifyTecGPT('¡Preparate, ahí vienen!');
                 updateHUD('OLEADA INICIADA');
             }
 
