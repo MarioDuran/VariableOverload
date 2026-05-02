@@ -55,7 +55,7 @@
         <h1>START</h1>
         <p>↓ Pulsa ENTER VR abajo ↓</p>
         <p><b>Mando Izq:</b> Joystick mover | Grip correr | Gatillo disparar</p>
-        <p><b>Mando Der:</b> Joystick girar | A/B/Joystick cambiar modo ARC | Gatillo disparar</p>
+        <p><b>Mando Der:</b> Joystick cambiar arma | Gatillo disparar</p>
         <p>Campaña: enteros → flotantes → strings → booleanos → auto tipado.</p>
         <div id="error-log"></div>
     </div>
@@ -194,6 +194,7 @@
             let currentWeaponIndex = 0;
             let weaponSwitchCooldown = 0;
             let rightGripWasPressed = false;
+            let rightStickWeaponAxisWasActive = false;
             let missionIndex = 0;
             let pendingWaveAfterUpgrade = false;
             let finalBossSpawned = false;
@@ -385,6 +386,7 @@
                 isReloading = false;
                 rapidFireUntil = 0;
                 rightGripWasPressed = false;
+                rightStickWeaponAxisWasActive = false;
                 resourcesHintShown = false;
                 unlockedWeapons = ['int'];
                 currentWeaponIndex = 0;
@@ -678,19 +680,20 @@
                     vrHudCtx.fillText(message, 640, 188);
                 }
 
-                // Inferior izquierda: arma y munición total disponible.
-                vrHudCtx.textAlign = 'left';
+                // Parte inferior: arma a la izquierda y minimapa a la derecha, ambos cerca del centro.
+                vrHudCtx.textAlign = 'center';
                 vrHudCtx.fillStyle = colorHex;
-                vrHudCtx.font = 'bold 38px Courier New';
-                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 300, 258);
+                vrHudCtx.font = 'bold 34px Courier New';
+                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 440, 246);
 
                 vrHudCtx.fillStyle = 'rgba(0, 255, 255, 0.88)';
-                vrHudCtx.font = 'bold 30px Courier New';
-                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 300, 298);
+                vrHudCtx.font = 'bold 28px Courier New';
+                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 440, 286);
 
                 if (clock.getElapsedTime() < rapidFireUntil) {
                     vrHudCtx.fillStyle = 'rgba(255, 255, 255, 0.92)';
-                    vrHudCtx.fillText('RAPID FIRE', 530, 298);
+                    vrHudCtx.font = 'bold 24px Courier New';
+                    vrHudCtx.fillText('RAPID FIRE', 440, 316);
                 }
 
                 drawMinimap();
@@ -698,9 +701,9 @@
             }
 
             function drawMinimap() {
-                const mapSize = 150;
-                const offsetX = 760;
-                const offsetY = 160;
+                const mapSize = 128;
+                const offsetX = 776;
+                const offsetY = 182;
                 const cellW = mapSize / GRID_SIZE;
                 const cellH = mapSize / GRID_SIZE;
 
@@ -840,7 +843,7 @@
                         if (z === 0 || z === GRID_SIZE - 1 || x === 0 || x === GRID_SIZE - 1) {
                             row.push(1);
                         } else if (x > 2 && x < GRID_SIZE - 3 && z > 2 && z < GRID_SIZE - 3) {
-                            row.push(Math.random() > 0.82 ? 1 : 0);
+                            row.push(Math.random() > 0.88 ? 1 : 0);
                         } else {
                             row.push(0);
                         }
@@ -854,6 +857,11 @@
                     for (let dx = -2; dx <= 2; dx++) {
                         mapGrid[cz + dz][cx + dx] = 0;
                     }
+                }
+                // Carriles principales más limpios: reducen que la IA se atore en esquinas.
+                for (let i = 1; i < GRID_SIZE - 1; i++) {
+                    mapGrid[cz][i] = 0;
+                    mapGrid[i][cx] = 0;
                 }
             }
 
@@ -1023,25 +1031,23 @@
                     return {
                         total: 7,
                         types: ['int'],
-                        spawnRate: 0.95,
+                        spawnRate: 0.92,
                         maxAlive: 3,
                         difficulty: 1,
-                        floatingChance: 0,
-                        previewFloat: false
+                        bossChance: 0.06
                     };
                 }
 
                 if (currentMission && path === currentMission.route) {
                     if (currentMission.unlock === 'auto') {
                         return {
-                            total: 24,
+                            total: 22,
                             types: ['int', 'float', 'string', 'bool'],
                             spawnRate: 0.60,
                             maxAlive: 7,
                             difficulty: baseDifficulty + 1.1,
-                            floatingChance: 0.35,
-                            previewFloat: false,
-                            finalHorde: true
+                            finalHorde: true,
+                            bossChance: 0.14
                         };
                     }
                     return {
@@ -1050,56 +1056,54 @@
                         spawnRate: Math.max(0.52, 0.82 - missionIndex * 0.07),
                         maxAlive: 4 + missionIndex,
                         difficulty: baseDifficulty + 0.8,
-                        floatingChance: currentMission.unlock === 'float' ? 1.0 : 0.2 + missionIndex * 0.08,
-                        previewFloat: false,
-                        objectiveType: currentMission.unlock
+                        objectiveType: currentMission.unlock,
+                        bossChance: 0.11 + missionIndex * 0.025
                     };
                 }
+
+                const availableTypes = unlockedWeapons.filter(t => t !== 'auto');
+                if (!availableTypes.includes('int')) availableTypes.unshift('int');
 
                 if (missionIndex === 0) {
                     return {
                         total: 5 + depth,
                         types: ['int'],
-                        spawnRate: 0.88,
+                        spawnRate: 0.86,
                         maxAlive: 3 + Math.min(2, depth),
                         difficulty: baseDifficulty,
-                        floatingChance: path.startsWith('/home') ? Math.min(0.20, 0.04 + depth * 0.04) : 0.04,
-                        previewFloat: true
+                        bossChance: 0.07
                     };
                 }
 
                 if (missionIndex === 1) {
                     return {
                         total: 6 + depth,
-                        types: ['int', 'float'],
-                        spawnRate: 0.78,
+                        types: availableTypes.filter(t => ['int', 'float'].includes(t)),
+                        spawnRate: 0.76,
                         maxAlive: 4,
                         difficulty: baseDifficulty,
-                        floatingChance: 0.42,
-                        previewFloat: false
+                        bossChance: 0.09
                     };
                 }
 
                 if (missionIndex === 2) {
                     return {
                         total: 7 + depth,
-                        types: ['int', 'float', 'string'],
-                        spawnRate: 0.72,
+                        types: availableTypes.filter(t => ['int', 'float', 'string'].includes(t)),
+                        spawnRate: 0.70,
                         maxAlive: 5,
                         difficulty: baseDifficulty,
-                        floatingChance: 0.35,
-                        previewFloat: false
+                        bossChance: 0.10
                     };
                 }
 
                 return {
                     total: 8 + depth,
-                    types: ['int', 'float', 'string', 'bool'],
-                    spawnRate: 0.68,
+                    types: availableTypes.filter(t => ['int', 'float', 'string', 'bool'].includes(t)),
+                    spawnRate: 0.66,
                     maxAlive: 6,
                     difficulty: baseDifficulty,
-                    floatingChance: 0.38,
-                    previewFloat: false
+                    bossChance: 0.12
                 };
             }
 
@@ -1152,7 +1156,7 @@
                 const color = weaponColors[enemy.type] || 0xff0000;
                 const colorCss = '#' + color.toString(16).padStart(6, '0');
 
-                ctx.fillStyle = enemy.previewFloat ? '#001a1a' : '#001100';
+                ctx.fillStyle = enemy.isBoss ? '#111400' : '#001100';
                 ctx.fillRect(0, 0, 256, 256);
                 if (flash) {
                     ctx.fillStyle = 'rgba(255, 0, 0, 0.72)';
@@ -1160,28 +1164,37 @@
                 }
 
                 ctx.strokeStyle = flash ? '#ff3333' : colorCss;
-                ctx.lineWidth = 10;
+                ctx.lineWidth = enemy.isBoss ? 14 : 10;
                 ctx.strokeRect(0, 0, 256, 256);
 
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
+                ctx.fillStyle = flash ? '#ffffff' : colorCss;
 
                 const hpText = formatEnemyHp(enemy);
                 if (enemy.type === 'int' || enemy.type === 'float') {
-                    ctx.fillStyle = flash ? '#ffffff' : colorCss;
-                    ctx.font = enemy.type === 'float' ? 'bold 64px Courier New' : 'bold 76px Courier New';
-                    ctx.fillText(hpText, 128, 120);
+                    ctx.font = enemy.type === 'float' ? 'bold 60px Courier New' : 'bold 74px Courier New';
+                    ctx.fillText(hpText, 128, enemy.isBoss ? 104 : 118);
                     ctx.font = 'bold 24px Courier New';
-                    ctx.fillText(enemy.type.toUpperCase(), 128, 190);
+                    ctx.fillText(enemy.type.toUpperCase(), 128, enemy.isBoss ? 165 : 188);
+                } else if (enemy.type === 'string') {
+                    const text = `"${enemy.stringValue || ''}"`;
+                    ctx.font = text.length > 9 ? 'bold 30px Courier New' : 'bold 42px Courier New';
+                    ctx.fillText(text, 128, 94);
+                    ctx.font = 'bold 32px Courier New';
+                    ctx.fillText(`LEN ${hpText}`, 128, 154);
                 } else {
-                    ctx.fillStyle = flash ? '#ffffff' : colorCss;
-                    ctx.font = enemy.label.length > 6 ? 'bold 34px Courier New' : 'bold 46px Courier New';
-                    ctx.fillText(enemy.label, 128, 95);
-                    ctx.font = 'bold 34px Courier New';
-                    ctx.fillText(`HP ${hpText}`, 128, 155);
+                    ctx.font = enemy.label && enemy.label.length > 6 ? 'bold 34px Courier New' : 'bold 46px Courier New';
+                    ctx.fillText(enemy.label, 128, 96);
+                    ctx.font = 'bold 32px Courier New';
+                    ctx.fillText(`HP ${hpText}`, 128, 154);
                 }
 
-                if (enemy.floating) {
+                if (enemy.isBoss) {
+                    ctx.font = 'bold 24px Courier New';
+                    ctx.fillStyle = flash ? '#ffffff' : '#ffcc00';
+                    ctx.fillText('BOSS', 128, 212);
+                } else if (enemy.floating) {
                     ctx.font = 'bold 22px Courier New';
                     ctx.fillStyle = flash ? '#ffffff' : colorCss;
                     ctx.fillText('FLOATING', 128, 222);
@@ -1192,39 +1205,57 @@
 
             function formatEnemyHp(enemy) {
                 if (enemy.type === 'float') return Math.max(0, enemy.hp).toFixed(2);
+                if (enemy.type === 'string') return String(Math.max(0, enemy.stringValue ? enemy.stringValue.length : Math.ceil(enemy.hp)));
                 return String(Math.max(0, Math.ceil(enemy.hp)));
             }
 
-            function makeEnemyHp(type, difficulty, previewFloat = false) {
+            function makeStringValue(difficulty, isClassBoss = false) {
+                const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
                 const diff = Math.max(1, difficulty || 1);
+                const len = Math.max(3, Math.round((isClassBoss ? 8 : 3) + diff * (isClassBoss ? 1.6 : 1.1) + Math.random() * (isClassBoss ? 5 : 3)));
+                let out = '';
+                for (let i = 0; i < len; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+                return out;
+            }
+
+            function makeEnemyHp(type, difficulty, isClassBoss = false) {
+                const diff = Math.max(1, difficulty || 1);
+                const bossMul = isClassBoss ? 3.2 : 1;
                 if (type === 'float') {
-                    const base = previewFloat ? 1.05 : 1;
-                    const spread = previewFloat ? 0.35 : (0.45 + diff * 0.18);
-                    return Number((base + (diff - 1) * 0.85 + Math.random() * spread).toFixed(2));
+                    const hp = (1 + (diff - 1) * 0.85 + Math.random() * (0.45 + diff * 0.18)) * bossMul;
+                    return Number(Math.max(0.25, hp).toFixed(2));
                 }
                 if (type === 'int') {
-                    return Math.max(1, Math.round(1 + (diff - 1) * 1.25 + Math.random() * Math.max(0.35, diff * 0.75)));
+                    return Math.max(1, Math.round((1 + (diff - 1) * 1.25 + Math.random() * Math.max(0.35, diff * 0.75)) * bossMul));
                 }
-                if (type === 'bool') return Math.max(1, Math.round(1 + (diff - 1) * 1.1 + Math.random() * 1.2));
-                if (type === 'string') return Math.max(2, Math.round(2 + (diff - 1) * 1.4 + Math.random() * 1.8));
-                return Math.max(1, Math.round(diff));
+                if (type === 'bool') return Math.max(1, Math.round((1 + (diff - 1) * 1.1 + Math.random() * 1.2) * bossMul));
+                if (type === 'string') return Math.max(2, Math.round((2 + (diff - 1) * 1.4 + Math.random() * 1.8) * bossMul));
+                return Math.max(1, Math.round(diff * bossMul));
             }
 
             function refreshEnemyTexture(enemy, flash = false) {
-                if (!enemy || !enemy.material || enemy.isBoss) return;
+                if (!enemy || !enemy.material || enemy.isFinalBoss) return;
                 const oldMap = enemy.material.map;
                 enemy.material.map = createEnemyTexture(enemy, flash);
                 enemy.material.needsUpdate = true;
                 if (oldMap && oldMap.dispose) oldMap.dispose();
             }
 
+            function getSpawnableTypes(types) {
+                const allowed = (types || ['int']).filter(type => {
+                    if (type === 'int') return true;
+                    return unlockedWeapons.includes(type);
+                });
+                return allowed.length ? allowed : ['int'];
+            }
+
             function spawnEnemy(config, forcedType = null, forcedPosition = null) {
-                const type = forcedType || choose(config.types);
-                const floating = Math.random() < (config.floatingChance || 0) || type === 'float';
-                const previewFloat = config.previewFloat && floating;
-                const actualType = previewFloat ? 'float' : type;
+                const pool = forcedType ? [forcedType] : getSpawnableTypes(config.types);
+                const actualType = choose(pool);
+                const isClassBoss = !forcedPosition && !config.finalHorde && Math.random() < (config.bossChance || 0);
+                const stringValue = actualType === 'string' ? makeStringValue(config.difficulty || 1, isClassBoss) : null;
                 const label = actualType === 'string'
-                    ? choose(typeLabels.string)
+                    ? `"${stringValue}"`
                     : actualType === 'bool'
                         ? choose(typeLabels.bool)
                         : actualType.toUpperCase();
@@ -1232,11 +1263,13 @@
                 const spot = forcedPosition || getRandomSpawnSpot();
                 if (!spot) return;
 
-                const hp = makeEnemyHp(actualType, config.difficulty || 1, previewFloat);
+                const hp = actualType === 'string' ? stringValue.length : makeEnemyHp(actualType, config.difficulty || 1, isClassBoss);
                 const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
-                const size = actualType === 'string' ? 3.6 : 3.1;
-                const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), material);
-                const y = floating ? 3.3 + Math.random() * 1.2 : 1.55;
+                const floating = actualType === 'float';
+                const width = isClassBoss ? 3.6 : (actualType === 'string' ? 3.6 : 3.1);
+                const height = isClassBoss ? 6.4 : (actualType === 'string' ? 3.6 : 3.1);
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, width), material);
+                const y = floating ? (isClassBoss ? 4.8 : 3.3 + Math.random() * 1.2) : height / 2;
                 mesh.position.set(spot.x * TILE_SIZE, y, spot.z * TILE_SIZE);
 
                 const enemy = {
@@ -1244,17 +1277,18 @@
                     material,
                     type: actualType,
                     label,
+                    stringValue,
                     hp,
                     maxHp: hp,
                     floating,
-                    previewFloat,
                     bobOffset: Math.random() * Math.PI * 2,
                     box: new THREE.Box3().setFromObject(mesh),
-                    speed: (floating ? 4.7 : 4.0) + Math.min(2.5, score * 0.04) + (config.difficulty || 1) * 0.2,
+                    speed: (floating ? 4.7 : 4.0) + Math.min(2.5, score * 0.04) + (config.difficulty || 1) * 0.2 - (isClassBoss ? 0.65 : 0),
                     attackCooldown: 0,
                     spawnAddsCooldown: 0,
                     fractionalDamageBank: 0,
-                    isBoss: false
+                    isBoss: isClassBoss,
+                    isFinalBoss: false
                 };
 
                 material.map = createEnemyTexture(enemy);
@@ -1286,7 +1320,7 @@
 
                 const material = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), color: 0xffffff });
                 const mesh = new THREE.Mesh(new THREE.BoxGeometry(7, 7, 7), material);
-                mesh.position.set(spot.x * TILE_SIZE, 4.2, spot.z * TILE_SIZE);
+                mesh.position.set(spot.x * TILE_SIZE, 3.5, spot.z * TILE_SIZE);
                 scene.add(mesh);
 
                 enemies.push({
@@ -1296,13 +1330,14 @@
                     label: 'Variable Overload',
                     hp: 120,
                     maxHp: 120,
-                    floating: true,
+                    floating: false,
                     bobOffset: 0,
                     box: new THREE.Box3().setFromObject(mesh),
                     speed: 2.3,
                     attackCooldown: 0,
                     spawnAddsCooldown: 4,
-                    isBoss: true
+                    isBoss: true,
+                    isFinalBoss: true
                 });
             }
 
@@ -1506,12 +1541,12 @@
                 });
             }
 
-            function switchWeapon() {
+            function switchWeapon(step = 1) {
                 if (unlockedWeapons.length <= 1) {
                     updateHUD('SOLO ARC-INT DISPONIBLE');
                     return;
                 }
-                currentWeaponIndex = (currentWeaponIndex + 1) % unlockedWeapons.length;
+                currentWeaponIndex = (currentWeaponIndex + step + unlockedWeapons.length) % unlockedWeapons.length;
                 updateWeaponMaterial();
                 updateHUD(`MODO: ${weaponNames[getCurrentWeaponType()]}`);
             }
@@ -1601,18 +1636,35 @@
             }
 
             function canDamageEnemy(weaponType, enemy) {
-                if (enemy.isBoss) return weaponType === 'auto';
+                if (enemy.isFinalBoss) return weaponType === 'auto';
                 return true;
             }
 
             function getDamage(weaponType, enemy) {
-                if (enemy.isBoss) return weaponType === 'auto' ? 6 : 0;
+                if (enemy.isFinalBoss) return weaponType === 'auto' ? 6 : 0;
                 if (weaponType === 'auto') return 4;
                 return weaponType === enemy.type ? 1 : 0.10;
             }
 
             function applyTypedDamage(enemy, damage, weaponType) {
                 const exactTypeHit = weaponType === enemy.type || weaponType === 'auto';
+
+                if (enemy.type === 'string') {
+                    if (exactTypeHit) {
+                        const chars = Math.max(1, Math.round(damage));
+                        enemy.stringValue = (enemy.stringValue || '').slice(0, Math.max(0, (enemy.stringValue || '').length - chars));
+                    } else {
+                        enemy.fractionalDamageBank = (enemy.fractionalDamageBank || 0) + damage;
+                        const chars = Math.floor(enemy.fractionalDamageBank + 1e-9);
+                        if (chars > 0) {
+                            enemy.stringValue = (enemy.stringValue || '').slice(0, Math.max(0, (enemy.stringValue || '').length - chars));
+                            enemy.fractionalDamageBank -= chars;
+                        }
+                    }
+                    enemy.label = `"${enemy.stringValue || ''}"`;
+                    enemy.hp = enemy.stringValue ? enemy.stringValue.length : 0;
+                    return;
+                }
 
                 if (enemy.type === 'float') {
                     enemy.hp = Number(Math.max(0, enemy.hp - damage).toFixed(2));
@@ -1655,7 +1707,7 @@
                 }, 95);
 
                 if (enemy.hp <= 0) killEnemy(enemy, enemyIndex);
-                else if (enemy.isBoss) updateHUD(`BOSS HP: ${Math.ceil(enemy.hp)}/${enemy.maxHp}`);
+                else if (enemy.isFinalBoss) updateHUD(`BOSS HP: ${Math.ceil(enemy.hp)}/${enemy.maxHp}`);
             }
 
             function killEnemy(enemy, enemyIndex) {
@@ -1667,13 +1719,13 @@
                 playEnemyKillSound();
 
                 if (activeWave) activeWave.dead++;
-                if (!enemy.isBoss) {
+                if (!enemy.isFinalBoss) {
                     const dropPosition = enemy.mesh.position.clone();
                     dropPosition.y = 1.1;
                     maybeDropPickup(dropPosition);
                 }
 
-                if (enemy.isBoss) {
+                if (enemy.isFinalBoss) {
                     finalBossDefeated = true;
                     finishGame();
                 }
@@ -1696,6 +1748,10 @@
             }
 
             // --- ENEMIGOS / IA ---
+            function isWalkableCell(x, z) {
+                return x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE && mapGrid[z] && mapGrid[z][x] !== 1;
+            }
+
             function updateFlowField(targetX, targetZ) {
                 for (let z = 0; z < GRID_SIZE; z++) {
                     for (let x = 0; x < GRID_SIZE; x++) flowField[z][x] = 9999;
@@ -1704,18 +1760,19 @@
 
                 const queue = [{ x: targetX, z: targetZ, dist: 0 }];
                 flowField[targetZ][targetX] = 0;
-                const dirs = [{ x: 0, z: -1 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 1, z: 0 }];
+                const dirs = [{ x: 0, z: -1 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 1, z: 0 }, { x: -1, z: -1 }, { x: 1, z: -1 }, { x: -1, z: 1 }, { x: 1, z: 1 }];
 
                 while (queue.length > 0) {
                     const curr = queue.shift();
                     for (const d of dirs) {
                         const nx = curr.x + d.x;
                         const nz = curr.z + d.z;
-                        if (nx >= 0 && nx < GRID_SIZE && nz >= 0 && nz < GRID_SIZE && mapGrid[nz][nx] !== 1) {
-                            if (flowField[nz][nx] > curr.dist + 1) {
-                                flowField[nz][nx] = curr.dist + 1;
-                                queue.push({ x: nx, z: nz, dist: curr.dist + 1 });
-                            }
+                        if (!isWalkableCell(nx, nz)) continue;
+                        if (d.x !== 0 && d.z !== 0 && (!isWalkableCell(curr.x + d.x, curr.z) || !isWalkableCell(curr.x, curr.z + d.z))) continue;
+                        const cost = d.x !== 0 && d.z !== 0 ? 1.4 : 1;
+                        if (flowField[nz][nx] > curr.dist + cost) {
+                            flowField[nz][nx] = curr.dist + cost;
+                            queue.push({ x: nx, z: nz, dist: curr.dist + cost });
                         }
                     }
                 }
@@ -1733,11 +1790,11 @@
 
                     e.mesh.lookAt(playerDolly.position.x, e.mesh.position.y, playerDolly.position.z);
 
-                    if (e.isBoss) {
+                    if (e.isFinalBoss) {
                         e.spawnAddsCooldown -= delta;
                         if (e.spawnAddsCooldown <= 0 && enemies.length < 10) {
                             for (let n = 0; n < 2; n++) {
-                                spawnEnemy({ types: ['int', 'float', 'string', 'bool'], difficulty: 1.7, floatingChance: 0.35 }, choose(['int', 'float', 'string', 'bool']));
+                                spawnEnemy({ types: ['int', 'float', 'string', 'bool'], difficulty: 1.7, bossChance: 0 }, choose(['int', 'float', 'string', 'bool']));
                             }
                             e.spawnAddsCooldown = THREE.MathUtils.randFloat(4.5, 7.0);
                             notifyTecGPT('El virus invocó más variables. Mantén auto tipado activo y controla la horda.');
@@ -1759,7 +1816,7 @@
                     }
 
                     if (distToPlayer < (e.isBoss ? 6.0 : 3.6) && e.attackCooldown <= 0 && isGameRunning) {
-                        const damage = e.isBoss ? 24 : 10 + missionIndex * 2;
+                        const damage = e.isFinalBoss ? 24 : (e.isBoss ? 16 : 10 + missionIndex * 2);
                         health -= damage;
                         playPlayerDamageSound();
                         e.attackCooldown = e.isBoss ? 1.2 : 0.8;
@@ -1792,17 +1849,17 @@
                 let bestDist = (flowField[ez] && flowField[ez][ex] !== undefined) ? flowField[ez][ex] : 9999;
                 let bestX = ex;
                 let bestZ = ez;
-                const dirs = [{ x: 0, z: -1 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 1, z: 0 }];
+                const dirs = [{ x: 0, z: -1 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 1, z: 0 }, { x: -1, z: -1 }, { x: 1, z: -1 }, { x: -1, z: 1 }, { x: 1, z: 1 }];
 
                 for (const d of dirs) {
                     const nx = ex + d.x;
                     const nz = ez + d.z;
-                    if (nx >= 0 && nx < GRID_SIZE && nz >= 0 && nz < GRID_SIZE && mapGrid[nz][nx] !== 1) {
-                        if (flowField[nz][nx] < bestDist) {
-                            bestDist = flowField[nz][nx];
-                            bestX = nx;
-                            bestZ = nz;
-                        }
+                    if (!isWalkableCell(nx, nz)) continue;
+                    if (d.x !== 0 && d.z !== 0 && (!isWalkableCell(ex + d.x, ez) || !isWalkableCell(ex, ez + d.z))) continue;
+                    if (flowField[nz][nx] < bestDist) {
+                        bestDist = flowField[nz][nx];
+                        bestX = nx;
+                        bestZ = nz;
                     }
                 }
 
@@ -1875,10 +1932,10 @@
             }
 
             function getEnemyCollisionBox(enemy) {
-                const size = enemy.isBoss ? 5.5 : 2.25;
-                const height = enemy.isBoss ? 5.5 : 2.4;
+                const size = enemy.isFinalBoss ? 5.4 : (enemy.isBoss ? 2.7 : 1.9);
+                const height = enemy.isFinalBoss ? 6.8 : (enemy.isBoss ? 5.9 : 2.2);
                 return new THREE.Box3().setFromCenterAndSize(
-                    new THREE.Vector3(enemy.mesh.position.x, enemy.isBoss ? 3.5 : 1.4, enemy.mesh.position.z),
+                    new THREE.Vector3(enemy.mesh.position.x, enemy.isFinalBoss ? 3.4 : (enemy.isBoss ? 3.0 : 1.25), enemy.mesh.position.z),
                     new THREE.Vector3(size, height, size)
                 );
             }
@@ -1891,14 +1948,24 @@
             }
 
             function nudgeEnemyAwayFromWalls(enemy) {
-                const ex = Math.floor(enemy.mesh.position.x / TILE_SIZE);
-                const ez = Math.floor(enemy.mesh.position.z / TILE_SIZE);
+                const ex = Math.round(enemy.mesh.position.x / TILE_SIZE);
+                const ez = Math.round(enemy.mesh.position.z / TILE_SIZE);
                 const center = new THREE.Vector3(ex * TILE_SIZE, enemy.mesh.position.y, ez * TILE_SIZE);
                 const toCenter = center.sub(enemy.mesh.position);
                 toCenter.y = 0;
                 if (toCenter.lengthSq() > 0.01) {
                     toCenter.normalize();
-                    moveEnemyWithCollision(enemy, toCenter, 0.08);
+                    moveEnemyWithCollision(enemy, toCenter, 0.16);
+                }
+
+                const direct = new THREE.Vector3().subVectors(playerDolly.position, enemy.mesh.position);
+                direct.y = 0;
+                if (direct.lengthSq() > 0.01) {
+                    direct.normalize();
+                    const side = Math.random() < 0.5
+                        ? new THREE.Vector3(-direct.z, 0, direct.x)
+                        : new THREE.Vector3(direct.z, 0, -direct.x);
+                    moveEnemyWithCollision(enemy, side.normalize(), 0.08);
                 }
             }
 
@@ -1957,14 +2024,12 @@
                     }
 
                     if (source.handedness === 'right') {
-                        if (axX !== 0) playerDolly.rotation.y -= axX * 2.5 * delta;
-
-                        const rightGripPressed = source.gamepad.buttons[1] && source.gamepad.buttons[1].pressed;
-                        if (rightGripPressed && !rightGripWasPressed && weaponSwitchCooldown <= 0) {
-                            switchWeapon();
-                            weaponSwitchCooldown = 0.25;
+                        const stickSwitchActive = Math.abs(axX) > 0.65;
+                        if (stickSwitchActive && !rightStickWeaponAxisWasActive && weaponSwitchCooldown <= 0) {
+                            switchWeapon(axX > 0 ? 1 : -1);
+                            weaponSwitchCooldown = 0.28;
                         }
-                        rightGripWasPressed = !!rightGripPressed;
+                        rightStickWeaponAxisWasActive = stickSwitchActive;
                     }
                 }
             }
