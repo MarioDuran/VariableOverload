@@ -193,6 +193,7 @@
             let unlockedWeapons = ['int'];
             let currentWeaponIndex = 0;
             let weaponSwitchCooldown = 0;
+            let rightGripWasPressed = false;
             let missionIndex = 0;
             let pendingWaveAfterUpgrade = false;
             let finalBossSpawned = false;
@@ -205,7 +206,7 @@
             let mapGrid = [];
             const TILE_SIZE = 10;
             const GRID_SIZE = 15;
-            const ENEMY_COUNT_MULTIPLIER = 2;
+            const ENEMY_COUNT_MULTIPLIER = 1.25;
             let walls = [];
             let wallMeshes = [];
             let doors = [];
@@ -293,7 +294,7 @@
                 const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, depthTest: false });
                 vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
                 vrHudMesh.renderOrder = 999;
-                vrHudMesh.position.set(0, 0.12, -1.25);
+                vrHudMesh.position.set(0, 0.06, -1.25);
                 vrHudMesh.rotation.x = -0.05;
                 camera.add(vrHudMesh);
 
@@ -301,7 +302,7 @@
                 const notificationMat = new THREE.MeshBasicMaterial({ map: notificationTex, transparent: true, depthTest: false, opacity: 0 });
                 notificationMesh = new THREE.Mesh(notificationGeo, notificationMat);
                 notificationMesh.renderOrder = 1001;
-                notificationMesh.position.set(0, -0.62, -1.18);
+                notificationMesh.position.set(0, -0.54, -1.18);
                 notificationMesh.rotation.x = 0.08;
                 camera.add(notificationMesh);
                 drawNotification('');
@@ -383,6 +384,7 @@
                 stamina = MAX_STAMINA;
                 isReloading = false;
                 rapidFireUntil = 0;
+                rightGripWasPressed = false;
                 resourcesHintShown = false;
                 unlockedWeapons = ['int'];
                 currentWeaponIndex = 0;
@@ -535,18 +537,18 @@
                     return;
                 }
 
-                notificationCtx.fillStyle = 'rgba(0, 20, 10, 0.54)';
-                roundRect(notificationCtx, 24, 34, 1152, 174, 28, true, false);
-                notificationCtx.strokeStyle = 'rgba(0, 255, 170, 0.58)';
-                notificationCtx.lineWidth = 6;
-                roundRect(notificationCtx, 24, 34, 1152, 174, 28, false, true);
+                notificationCtx.fillStyle = 'rgba(0, 20, 10, 0.48)';
+                roundRect(notificationCtx, 80, 44, 1040, 154, 24, true, false);
+                notificationCtx.strokeStyle = 'rgba(0, 255, 170, 0.48)';
+                notificationCtx.lineWidth = 5;
+                roundRect(notificationCtx, 80, 44, 1040, 154, 24, false, true);
 
                 const displayText = `TecGPT: "${text}"`;
                 const typedText = displayText.slice(0, Math.max(0, Math.min(displayText.length, visibleChars)));
-                notificationCtx.fillStyle = 'rgba(234, 255, 255, 0.86)';
-                notificationCtx.font = 'bold 34px Courier New';
-                notificationCtx.textAlign = 'left';
-                wrapText(notificationCtx, typedText, 58, 94, 1085, 42);
+                notificationCtx.fillStyle = 'rgba(234, 255, 255, 0.84)';
+                notificationCtx.font = 'bold 28px Courier New';
+                notificationCtx.textAlign = 'center';
+                wrapTextCentered(notificationCtx, typedText, 600, 98, 970, 34);
                 notificationTex.needsUpdate = true;
             }
 
@@ -557,15 +559,15 @@
                 const elapsed = now - notificationStartTime;
                 const duration = activeNotification.duration;
                 let alpha = 1;
-                let y = -0.34;
+                let y = -0.28;
 
                 if (elapsed < 0.45) {
                     const t = elapsed / 0.45;
-                    y = THREE.MathUtils.lerp(-0.62, -0.34, easeOutCubic(t));
+                    y = THREE.MathUtils.lerp(-0.54, -0.28, easeOutCubic(t));
                     alpha = t;
                 } else if (elapsed > duration - 0.45) {
                     const t = (elapsed - (duration - 0.45)) / 0.45;
-                    y = THREE.MathUtils.lerp(-0.34, -0.62, easeOutCubic(t));
+                    y = THREE.MathUtils.lerp(-0.28, -0.54, easeOutCubic(t));
                     alpha = 1 - t;
                 }
 
@@ -604,6 +606,22 @@
                 ctx.fillText(line, x, y);
             }
 
+            function wrapTextCentered(ctx, text, centerX, y, maxWidth, lineHeight) {
+                const words = text.split(' ');
+                let line = '';
+                for (let i = 0; i < words.length; i++) {
+                    const testLine = line + words[i] + ' ';
+                    if (ctx.measureText(testLine).width > maxWidth && i > 0) {
+                        ctx.fillText(line.trimEnd(), centerX, y);
+                        line = words[i] + ' ';
+                        y += lineHeight;
+                    } else {
+                        line = testLine;
+                    }
+                }
+                ctx.fillText(line.trimEnd(), centerX, y);
+            }
+
             function roundRect(ctx, x, y, w, h, r, fill, stroke) {
                 ctx.beginPath();
                 ctx.moveTo(x + r, y);
@@ -631,8 +649,8 @@
                 const barWidth = 360;
                 const barHeight = 16;
                 const barX = 640 - (barWidth / 2);
-                const hpY = 46;
-                const staminaY = 70;
+                const hpY = 58;
+                const staminaY = 82;
 
                 vrHudCtx.fillStyle = 'rgba(0, 60, 0, 0.42)';
                 vrHudCtx.fillRect(barX, hpY, barWidth, barHeight);
@@ -649,30 +667,30 @@
                 vrHudCtx.textAlign = 'center';
                 vrHudCtx.fillStyle = 'rgba(120, 255, 160, 0.88)';
                 vrHudCtx.font = 'bold 26px Courier New';
-                vrHudCtx.fillText(currentPath, 640, 118);
+                vrHudCtx.fillText(currentPath, 640, 130);
                 vrHudCtx.fillStyle = activeWave ? 'rgba(255, 180, 0, 0.88)' : 'rgba(0, 255, 170, 0.82)';
                 vrHudCtx.font = 'bold 24px Courier New';
-                vrHudCtx.fillText(`ENEMIGOS: ${remaining}  |  ${roomState.cleared ? 'PUERTAS ABIERTAS' : 'PUERTAS BLOQUEADAS'}`, 640, 148);
+                vrHudCtx.fillText(`ENEMIGOS: ${remaining}  |  ${roomState.cleared ? 'PUERTAS ABIERTAS' : 'PUERTAS BLOQUEADAS'}`, 640, 158);
 
                 if (message) {
                     vrHudCtx.fillStyle = 'rgba(255, 190, 0, 0.9)';
                     vrHudCtx.font = 'bold 26px Courier New';
-                    vrHudCtx.fillText(message, 640, 178);
+                    vrHudCtx.fillText(message, 640, 188);
                 }
 
                 // Inferior izquierda: arma y munición total disponible.
                 vrHudCtx.textAlign = 'left';
                 vrHudCtx.fillStyle = colorHex;
                 vrHudCtx.font = 'bold 38px Courier New';
-                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 70, 268);
+                vrHudCtx.fillText(`[ ${weaponNames[currentWeapon]} ]`, 300, 258);
 
                 vrHudCtx.fillStyle = 'rgba(0, 255, 255, 0.88)';
                 vrHudCtx.font = 'bold 30px Courier New';
-                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 70, 308);
+                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 300, 298);
 
                 if (clock.getElapsedTime() < rapidFireUntil) {
                     vrHudCtx.fillStyle = 'rgba(255, 255, 255, 0.92)';
-                    vrHudCtx.fillText('RAPID FIRE', 300, 308);
+                    vrHudCtx.fillText('RAPID FIRE', 530, 298);
                 }
 
                 drawMinimap();
@@ -681,8 +699,8 @@
 
             function drawMinimap() {
                 const mapSize = 150;
-                const offsetX = hudCanvas.width - mapSize - 74;
-                const offsetY = hudCanvas.height - mapSize - 4;
+                const offsetX = 760;
+                const offsetY = 160;
                 const cellW = mapSize / GRID_SIZE;
                 const cellH = mapSize / GRID_SIZE;
 
@@ -1003,9 +1021,9 @@
 
                 if (path === '/') {
                     return {
-                        total: 12,
+                        total: 7,
                         types: ['int'],
-                        spawnRate: 1.25,
+                        spawnRate: 0.95,
                         maxAlive: 3,
                         difficulty: 1,
                         floatingChance: 0,
@@ -1016,9 +1034,9 @@
                 if (currentMission && path === currentMission.route) {
                     if (currentMission.unlock === 'auto') {
                         return {
-                            total: 44,
+                            total: 24,
                             types: ['int', 'float', 'string', 'bool'],
-                            spawnRate: 0.75,
+                            spawnRate: 0.60,
                             maxAlive: 7,
                             difficulty: baseDifficulty + 1.1,
                             floatingChance: 0.35,
@@ -1027,9 +1045,9 @@
                         };
                     }
                     return {
-                        total: (10 + missionIndex * 5) * 2,
+                        total: 7 + missionIndex * 3,
                         types: [currentMission.unlock],
-                        spawnRate: Math.max(0.62, 1.0 - missionIndex * 0.1),
+                        spawnRate: Math.max(0.52, 0.82 - missionIndex * 0.07),
                         maxAlive: 4 + missionIndex,
                         difficulty: baseDifficulty + 0.8,
                         floatingChance: currentMission.unlock === 'float' ? 1.0 : 0.2 + missionIndex * 0.08,
@@ -1040,9 +1058,9 @@
 
                 if (missionIndex === 0) {
                     return {
-                        total: (6 + depth * 2) * 2,
+                        total: 5 + depth,
                         types: ['int'],
-                        spawnRate: 1.05,
+                        spawnRate: 0.88,
                         maxAlive: 3 + Math.min(2, depth),
                         difficulty: baseDifficulty,
                         floatingChance: path.startsWith('/home') ? Math.min(0.20, 0.04 + depth * 0.04) : 0.04,
@@ -1052,9 +1070,9 @@
 
                 if (missionIndex === 1) {
                     return {
-                        total: (7 + depth * 2) * 2,
+                        total: 6 + depth,
                         types: ['int', 'float'],
-                        spawnRate: 0.95,
+                        spawnRate: 0.78,
                         maxAlive: 4,
                         difficulty: baseDifficulty,
                         floatingChance: 0.42,
@@ -1064,9 +1082,9 @@
 
                 if (missionIndex === 2) {
                     return {
-                        total: (8 + depth * 2) * 2,
+                        total: 7 + depth,
                         types: ['int', 'float', 'string'],
-                        spawnRate: 0.88,
+                        spawnRate: 0.72,
                         maxAlive: 5,
                         difficulty: baseDifficulty,
                         floatingChance: 0.35,
@@ -1075,9 +1093,9 @@
                 }
 
                 return {
-                    total: (10 + depth * 2) * 2,
+                    total: 8 + depth,
                     types: ['int', 'float', 'string', 'bool'],
-                    spawnRate: 0.80,
+                    spawnRate: 0.68,
                     maxAlive: 6,
                     difficulty: baseDifficulty,
                     floatingChance: 0.38,
@@ -1734,12 +1752,10 @@
 
                     const hasLOS = hasLineOfSightToPlayer(e, distToPlayer);
                     const pathDir = getPathfindingDirection(e);
-                    const primaryDir = hasLOS ? directDir : pathDir;
-                    const moved = moveEnemyWithCollision(e, primaryDir, delta);
+                    const moved = moveEnemyWithSteering(e, directDir, pathDir, delta, hasLOS);
 
-                    // Si el enemigo intentó ir directo pero chocó, usa el flow-field solo para desatorarse.
-                    if (!moved && hasLOS && pathDir.lengthSq() > 0) {
-                        moveEnemyWithCollision(e, pathDir, delta * 0.95);
+                    if (!moved) {
+                        nudgeEnemyAwayFromWalls(e);
                     }
 
                     if (distToPlayer < (e.isBoss ? 6.0 : 3.6) && e.attackCooldown <= 0 && isGameRunning) {
@@ -1797,37 +1813,93 @@
                 return dir;
             }
 
+            function moveEnemyWithSteering(enemy, directDir, pathDir, delta, hasLOS) {
+                const candidates = [];
+                const direct = directDir && directDir.lengthSq() > 0 ? directDir.clone().normalize() : null;
+                const path = pathDir && pathDir.lengthSq() > 0 ? pathDir.clone().normalize() : null;
+
+                if (hasLOS && direct) candidates.push(direct);
+                if (hasLOS && direct && path) candidates.push(direct.clone().multiplyScalar(0.72).add(path.clone().multiplyScalar(0.28)).normalize());
+                if (path) candidates.push(path);
+                if (direct) {
+                    const sideA = new THREE.Vector3(-direct.z, 0, direct.x).normalize();
+                    const sideB = new THREE.Vector3(direct.z, 0, -direct.x).normalize();
+                    candidates.push(direct.clone().multiplyScalar(0.65).add(sideA.multiplyScalar(0.35)).normalize());
+                    candidates.push(direct.clone().multiplyScalar(0.65).add(sideB.multiplyScalar(0.35)).normalize());
+                }
+                if (path) {
+                    candidates.push(new THREE.Vector3(-path.z, 0, path.x).normalize());
+                    candidates.push(new THREE.Vector3(path.z, 0, -path.x).normalize());
+                }
+
+                const before = enemy.mesh.position.clone();
+                const beforeDist = before.distanceTo(playerDolly.position);
+                for (const candidate of candidates) {
+                    if (!candidate || candidate.lengthSq() === 0) continue;
+                    enemy.mesh.position.copy(before);
+                    enemy.box.setFromObject(enemy.mesh);
+                    if (moveEnemyWithCollision(enemy, candidate, delta)) {
+                        const afterDist = enemy.mesh.position.distanceTo(playerDolly.position);
+                        if (afterDist <= beforeDist + 0.35) return true;
+                    }
+                }
+
+                enemy.mesh.position.copy(before);
+                enemy.box.setFromObject(enemy.mesh);
+                return false;
+            }
+
             function moveEnemyWithCollision(enemy, dir, delta) {
                 if (!dir || dir.lengthSq() === 0) return false;
-                const step = enemy.speed * delta;
+                const fullStep = enemy.speed * delta;
+                const subSteps = Math.max(1, Math.ceil(fullStep / 0.75));
+                const step = fullStep / subSteps;
                 let moved = false;
 
-                const prevX = enemy.mesh.position.x;
-                enemy.mesh.position.x += dir.x * step;
-                enemy.box.setFromObject(enemy.mesh);
-                if (enemyHitsWorldCollision(enemy)) {
-                    enemy.mesh.position.x = prevX;
-                } else {
-                    moved = Math.abs(dir.x * step) > 0.001;
+                for (let n = 0; n < subSteps; n++) {
+                    const before = enemy.mesh.position.clone();
+
+                    enemy.mesh.position.x += dir.x * step;
+                    enemy.box.setFromObject(enemy.mesh);
+                    if (enemyHitsWorldCollision(enemy)) enemy.mesh.position.x = before.x;
+
+                    enemy.mesh.position.z += dir.z * step;
+                    enemy.box.setFromObject(enemy.mesh);
+                    if (enemyHitsWorldCollision(enemy)) enemy.mesh.position.z = before.z;
+
+                    enemy.box.setFromObject(enemy.mesh);
+                    moved = moved || enemy.mesh.position.distanceToSquared(before) > 0.0004;
                 }
 
-                const prevZ = enemy.mesh.position.z;
-                enemy.mesh.position.z += dir.z * step;
-                enemy.box.setFromObject(enemy.mesh);
-                if (enemyHitsWorldCollision(enemy)) {
-                    enemy.mesh.position.z = prevZ;
-                } else {
-                    moved = moved || Math.abs(dir.z * step) > 0.001;
-                }
-
-                enemy.box.setFromObject(enemy.mesh);
                 return moved;
             }
 
+            function getEnemyCollisionBox(enemy) {
+                const size = enemy.isBoss ? 5.5 : 2.25;
+                const height = enemy.isBoss ? 5.5 : 2.4;
+                return new THREE.Box3().setFromCenterAndSize(
+                    new THREE.Vector3(enemy.mesh.position.x, enemy.isBoss ? 3.5 : 1.4, enemy.mesh.position.z),
+                    new THREE.Vector3(size, height, size)
+                );
+            }
+
             function enemyHitsWorldCollision(enemy) {
-                if (walls.some(w => enemy.box.intersectsBox(w.box))) return true;
-                if (doors.some(d => d.locked && enemy.box.intersectsBox(d.box))) return true;
+                const box = getEnemyCollisionBox(enemy);
+                if (walls.some(w => box.intersectsBox(w.box))) return true;
+                if (doors.some(d => d.locked && box.intersectsBox(d.box))) return true;
                 return false;
+            }
+
+            function nudgeEnemyAwayFromWalls(enemy) {
+                const ex = Math.floor(enemy.mesh.position.x / TILE_SIZE);
+                const ez = Math.floor(enemy.mesh.position.z / TILE_SIZE);
+                const center = new THREE.Vector3(ex * TILE_SIZE, enemy.mesh.position.y, ez * TILE_SIZE);
+                const toCenter = center.sub(enemy.mesh.position);
+                toCenter.y = 0;
+                if (toCenter.lengthSq() > 0.01) {
+                    toCenter.normalize();
+                    moveEnemyWithCollision(enemy, toCenter, 0.08);
+                }
             }
 
             // --- MOVIMIENTO / PUERTAS ---
@@ -1887,13 +1959,12 @@
                     if (source.handedness === 'right') {
                         if (axX !== 0) playerDolly.rotation.y -= axX * 2.5 * delta;
 
-                        const aPressed = source.gamepad.buttons[4] && source.gamepad.buttons[4].pressed;
-                        const bPressed = source.gamepad.buttons[5] && source.gamepad.buttons[5].pressed;
-                        const thumbPressed = source.gamepad.buttons[3] && source.gamepad.buttons[3].pressed;
-                        if ((aPressed || bPressed || thumbPressed) && weaponSwitchCooldown <= 0) {
+                        const rightGripPressed = source.gamepad.buttons[1] && source.gamepad.buttons[1].pressed;
+                        if (rightGripPressed && !rightGripWasPressed && weaponSwitchCooldown <= 0) {
                             switchWeapon();
-                            weaponSwitchCooldown = 0.5;
+                            weaponSwitchCooldown = 0.25;
                         }
+                        rightGripWasPressed = !!rightGripPressed;
                     }
                 }
             }
