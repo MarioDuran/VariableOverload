@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>UNIX DOOM VR - TecGPT Campaign</title>
+    <title>UNIX DOOM Web - TecGPT Campaign</title>
     <style>
         body {
             margin: 0;
@@ -11,34 +11,89 @@
             background-color: #000;
             font-family: 'Courier New', Courier, monospace;
             color: #0f0;
+            height: 100vh;
+            user-select: none;
+        }
+        #info {
+            position: fixed;
+            inset: 0;
+            z-index: 20;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-        }
-        #info {
             text-align: center;
-            z-index: 10;
-            max-width: 980px;
             padding: 24px;
+            background: radial-gradient(circle at center, rgba(0, 48, 20, 0.74), rgba(0, 0, 0, 0.96));
         }
         h1 {
-            font-size: 80px;
-            margin: 0;
+            font-size: clamp(46px, 8vw, 92px);
+            margin: 0 0 18px 0;
             text-shadow: 0 0 15px #0f0;
             letter-spacing: 5px;
         }
-        p { color: #55ff55; font-size: 18px; }
+        p { color: #55ff55; font-size: 18px; max-width: 920px; line-height: 1.45; }
+        #start-button {
+            margin-top: 18px;
+            padding: 16px 34px;
+            border: 2px solid #00ff80;
+            background: rgba(0, 35, 12, 0.86);
+            color: #caffdf;
+            font: bold 22px 'Courier New', Courier, monospace;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(0, 255, 128, 0.35);
+        }
+        #start-button:hover { background: rgba(0, 80, 28, 0.95); }
         #game-container {
-            position: absolute;
-            top: 0;
-            left: 0;
+            position: fixed;
+            inset: 0;
             width: 100vw;
             height: 100vh;
             z-index: 1;
         }
-        #error-log { color: #ff0000; font-weight: bold; margin-top: 20px; }
+        #crosshair {
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            width: 24px;
+            height: 24px;
+            transform: translate(-50%, -50%);
+            z-index: 5;
+            pointer-events: none;
+        }
+        #crosshair::before,
+        #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(190, 255, 210, 0.88);
+            box-shadow: 0 0 8px #00ff80;
+        }
+        #crosshair::before { left: 11px; top: 0; width: 2px; height: 24px; }
+        #crosshair::after { left: 0; top: 11px; width: 24px; height: 2px; }
+        #desktop-hint {
+            position: fixed;
+            left: 50%;
+            bottom: 18px;
+            transform: translateX(-50%);
+            z-index: 6;
+            color: rgba(170, 255, 190, 0.82);
+            background: rgba(0, 0, 0, 0.45);
+            border: 1px solid rgba(0, 255, 120, 0.35);
+            padding: 8px 12px;
+            font-size: 13px;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+        #screen-fade {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            background: #000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 80ms linear;
+        }
+        #error-log { color: #ff5555; font-weight: bold; margin-top: 20px; }
     </style>
 
     <script type="importmap">
@@ -53,14 +108,19 @@
 <body>
     <div id="info">
         <h1>START.<br>VARIABLE OVERLOAD.</h1>
+        <p>Versión web normal: teclado, ratón y pantalla completa del navegador. Haz clic para capturar el cursor.</p>
+        <p><strong>Controles:</strong> WASD mover · mouse mirar · clic disparar · Shift correr · Q/E o rueda cambiar arma · 1-5 elegir arma.</p>
+        <button id="start-button">INICIAR CAMPAÑA</button>
         <div id="error-log"></div>
     </div>
 
     <div id="game-container"></div>
+    <div id="crosshair"></div>
+    <div id="desktop-hint">WASD mover · Mouse mirar · Clic disparar · Shift correr · Q/E cambiar arma</div>
+    <div id="screen-fade"></div>
 
     <script type="module">
         import * as THREE from 'three';
-        import { VRButton } from 'three/addons/webxr/VRButton.js';
 
         try {
             // --- SISTEMA DE ARCHIVOS / CAMPAÑA ---
@@ -162,7 +222,7 @@
                 boss: ['OVERLOAD']
             };
 
-            // --- THREE / VR ---
+            // --- THREE / WEB ---
             let camera, scene, renderer;
             let playerDolly;
             let rightController = null;
@@ -183,8 +243,10 @@
 
             let clipAmmo = 36;
             const MAX_CLIP = 36;
-            let reserveAmmo = 84;
-            const MAX_RESERVE = 300;
+            const STARTING_AMMO = 120;
+            const MIN_RESPAWN_AMMO = 120;
+            const MAX_AMMO = 300;
+            let reserveAmmo = 0;
             let isReloading = false;
             let rapidFireUntil = 0;
 
@@ -201,6 +263,7 @@
 
             const roomStates = new Map();
             const claimedUpgrades = new Set();
+            let checkpointState = null;
 
             // --- MAPA / ENTIDADES ---
             let mapGrid = [];
@@ -229,7 +292,7 @@
 
             const clock = new THREE.Clock();
 
-            // --- HUD VR ---
+            // --- HUD EN PANTALLA ---
             const hudCanvas = document.createElement('canvas');
             hudCanvas.width = 1280;
             hudCanvas.height = 320;
@@ -255,6 +318,14 @@
             let notificationPreparing = false;
             const soundCache = new Map();
 
+            // --- CONTROLES WEB NORMAL ---
+            const desktopController = { userData: { isSelecting: false, nextShot: 0, isDesktop: true } };
+            const keysPressed = new Set();
+            let isPointerLocked = false;
+            let yaw = 0;
+            let pitch = 0;
+            const MOUSE_SENSITIVITY = 0.0022;
+
             init();
 
             function init() {
@@ -271,15 +342,8 @@
                 renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
                 renderer.setPixelRatio(window.devicePixelRatio);
                 renderer.setSize(window.innerWidth, window.innerHeight);
-                renderer.xr.enabled = true;
                 document.getElementById('game-container').appendChild(renderer.domElement);
-
-                const vrButton = VRButton.createButton(renderer);
-                vrButton.addEventListener('click', () => {
-                    document.getElementById('info').style.display = 'none';
-                    if (!isGameRunning) startGame();
-                });
-                document.body.appendChild(vrButton);
+                setupDesktopControls();
 
                 playerDolly = new THREE.Group();
                 scene.add(playerDolly);
@@ -293,7 +357,7 @@
                 camera.add(listener);
                 bgm = new THREE.Audio(listener);
 
-                // HUD superior/inferior del visor.
+                // HUD superior/inferior fijado a la cámara.
                 const hudGeo = new THREE.PlaneGeometry(1.9, 0.48);
                 const hudMat = new THREE.MeshBasicMaterial({ map: vrHudTex, transparent: true, depthTest: false });
                 vrHudMesh = new THREE.Mesh(hudGeo, hudMat);
@@ -320,46 +384,98 @@
                     emissiveIntensity: 0.85
                 });
 
-                const onControllerConnected = (event) => {
-                    const controller = event.target;
-                    const handedness = event.data.handedness;
-                    controller.userData.isSelecting = false;
-                    controller.userData.nextShot = 0;
-
-                    if (handedness === 'right') {
-                        rightController = controller;
-                        rightWeaponMesh = createGunMesh();
-                        rightController.add(rightWeaponMesh);
-                        rightController.addEventListener('selectstart', () => {
-                            rightController.userData.isSelecting = true;
-                            fireWeapon(rightController, rightWeaponMesh);
-                        });
-                        rightController.addEventListener('selectend', () => rightController.userData.isSelecting = false);
-                    } else if (handedness === 'left') {
-                        leftController = controller;
-                        leftWeaponMesh = createGunMesh();
-                        leftController.add(leftWeaponMesh);
-                        leftController.addEventListener('selectstart', () => {
-                            leftController.userData.isSelecting = true;
-                            fireWeapon(leftController, leftWeaponMesh);
-                        });
-                        leftController.addEventListener('selectend', () => leftController.userData.isSelecting = false);
-                    }
-                };
-
-                const controller1 = renderer.xr.getController(0);
-                controller1.addEventListener('connected', onControllerConnected);
-                playerDolly.add(controller1);
-
-                const controller2 = renderer.xr.getController(1);
-                controller2.addEventListener('connected', onControllerConnected);
-                playerDolly.add(controller2);
+                rightController = desktopController;
+                rightWeaponMesh = createGunMesh();
+                rightWeaponMesh.position.set(0.34, -0.28, -0.72);
+                rightWeaponMesh.rotation.set(-0.10, -0.08, 0.0);
+                rightWeaponMesh.scale.setScalar(2.8);
+                camera.add(rightWeaponMesh);
 
                 buildBaseEnvironment();
                 updateHUD('SISTEMA EN ESPERA');
 
                 window.addEventListener('resize', onWindowResize);
                 renderer.setAnimationLoop(animate);
+            }
+
+            function setupDesktopControls() {
+                const startButton = document.getElementById('start-button');
+                const infoPanel = document.getElementById('info');
+
+                const beginFromGesture = () => {
+                    infoPanel.style.display = 'none';
+                    if (!isGameRunning && !isGameOver) startGame();
+                    requestPointerLock();
+                };
+
+                if (startButton) startButton.addEventListener('click', beginFromGesture);
+
+                renderer.domElement.addEventListener('click', () => {
+                    if (!isPointerLocked) requestPointerLock();
+                });
+
+                document.addEventListener('pointerlockchange', () => {
+                    isPointerLocked = document.pointerLockElement === renderer.domElement;
+                });
+
+                document.addEventListener('mousemove', (event) => {
+                    if (!isPointerLocked || !isGameRunning) return;
+                    yaw -= event.movementX * MOUSE_SENSITIVITY;
+                    pitch -= event.movementY * MOUSE_SENSITIVITY;
+                    pitch = THREE.MathUtils.clamp(pitch, -1.22, 1.10);
+                    playerDolly.rotation.y = yaw;
+                    camera.rotation.x = pitch;
+                });
+
+                document.addEventListener('keydown', (event) => {
+                    keysPressed.add(event.code);
+
+                    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
+                        event.preventDefault();
+                    }
+
+                    if (!isGameRunning && !isGameOver && event.code === 'Enter') beginFromGesture();
+                    if (!isGameRunning) return;
+
+                    if (event.code === 'KeyQ') switchWeapon(-1);
+                    if (event.code === 'KeyE') switchWeapon(1);
+
+                    if (/^Digit[1-5]$/.test(event.code)) {
+                        const desiredIndex = Number(event.code.replace('Digit', '')) - 1;
+                        if (desiredIndex >= 0 && desiredIndex < unlockedWeapons.length) {
+                            currentWeaponIndex = desiredIndex;
+                            updateWeaponMaterial();
+                            updateHUD(`MODO: ${weaponNames[getCurrentWeaponType()]}`);
+                        }
+                    }
+                });
+
+                document.addEventListener('keyup', (event) => {
+                    keysPressed.delete(event.code);
+                });
+
+                renderer.domElement.addEventListener('mousedown', (event) => {
+                    if (event.button !== 0) return;
+                    requestPointerLock();
+                    rightController.userData.isSelecting = true;
+                    fireWeapon(rightController, rightWeaponMesh);
+                });
+
+                document.addEventListener('mouseup', (event) => {
+                    if (event.button === 0) rightController.userData.isSelecting = false;
+                });
+
+                document.addEventListener('wheel', (event) => {
+                    if (!isGameRunning) return;
+                    event.preventDefault();
+                    switchWeapon(event.deltaY > 0 ? 1 : -1);
+                }, { passive: false });
+            }
+
+            function requestPointerLock() {
+                if (document.pointerLockElement !== renderer.domElement && renderer.domElement.requestPointerLock) {
+                    renderer.domElement.requestPointerLock();
+                }
             }
 
             function buildBaseEnvironment() {
@@ -383,9 +499,9 @@
                 const ctx = canvas.getContext('2d');
                 const tex = new THREE.CanvasTexture(canvas);
                 const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 });
-                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.7, 1.7), mat);
-                // Se dibuja detrás del HUD y de TecGPT para oscurecer solo el mundo.
-                mesh.renderOrder = 900;
+                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(5.0, 3.2), mat);
+                // Cubre completamente la vista durante cambios de directorio y respawn.
+                mesh.renderOrder = 2000;
                 mesh.position.set(0, 0.0, -1.08);
                 mesh.userData.ctx = ctx;
                 mesh.userData.tex = tex;
@@ -393,22 +509,21 @@
             }
 
             function showLoadingScreen(targetPath) {
+                const fade = document.getElementById('screen-fade');
+                if (fade) fade.style.opacity = '1';
                 if (!loadingMesh) return;
                 const ctx = loadingMesh.userData.ctx;
                 const tex = loadingMesh.userData.tex;
                 ctx.clearRect(0, 0, 1024, 512);
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.86)';
+                ctx.fillStyle = '#000000';
                 ctx.fillRect(0, 0, 1024, 512);
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillStyle = 'rgba(0, 255, 140, 0.92)';
-                ctx.font = 'bold 74px Courier New';
-                ctx.fillText('Cargando', 512, 256);
                 tex.needsUpdate = true;
                 loadingMesh.material.opacity = 1.0;
             }
 
             function hideLoadingScreen() {
+                const fade = document.getElementById('screen-fade');
+                if (fade) fade.style.opacity = '0';
                 if (loadingMesh) loadingMesh.material.opacity = 0;
             }
 
@@ -433,13 +548,20 @@
                 isGameOver = false;
                 health = 100;
                 score = 0;
-                clipAmmo = 120;
+                clipAmmo = STARTING_AMMO;
                 reserveAmmo = 0;
                 stamina = MAX_STAMINA;
                 isReloading = false;
                 rapidFireUntil = 0;
                 rightGripWasPressed = false;
                 rightStickWeaponAxisWasActive = false;
+                desktopController.userData.isSelecting = false;
+                desktopController.userData.nextShot = 0;
+                keysPressed.clear();
+                yaw = 0;
+                pitch = 0;
+                if (playerDolly) playerDolly.rotation.set(0, 0, 0);
+                if (camera) camera.rotation.set(0, 0, 0);
                 resourcesHintShown = false;
                 isDirectoryTransitioning = false;
                 lastBehindWarningTime = -999;
@@ -452,6 +574,7 @@
                 finalBossDefeated = false;
                 roomStates.clear();
                 claimedUpgrades.clear();
+                checkpointState = createDefaultCheckpoint();
                 notificationQueue.length = 0;
                 activeNotification = null;
                 updateWeaponMaterial();
@@ -471,6 +594,78 @@
                 notifyTecGPT('¡Boss, soy tu asistente TecGPT, te encuentras en el directorio home del servidor.!');
                 notifyTecGPT('Ha sido infectado por el virus Variable Overload. De momento todo parece manejable porque son puras variables de tipo entero. Utiliza tu pistola ARC para eliminarlas.');
                 notifyTecGPT(missions[0].intro);
+            }
+
+            // --- CHECKPOINTS ---
+            function createDefaultCheckpoint() {
+                return {
+                    unlockedWeapons: ['int'],
+                    currentWeapon: 'int',
+                    missionIndex: 0,
+                    claimedUpgrades: [],
+                    ammo: Math.min(MAX_AMMO, STARTING_AMMO),
+                    score: 0
+                };
+            }
+
+            function saveCheckpoint(message = 'CHECKPOINT GUARDADO') {
+                const currentWeapon = getCurrentWeaponType();
+                checkpointState = {
+                    unlockedWeapons: [...new Set(['int', ...unlockedWeapons])],
+                    currentWeapon,
+                    missionIndex,
+                    claimedUpgrades: [...claimedUpgrades],
+                    ammo: Math.min(MAX_AMMO, Math.max(clipAmmo, checkpointState?.ammo || 0, MIN_RESPAWN_AMMO)),
+                    score
+                };
+                updateHUD(message);
+            }
+
+            function saveCheckpointAmmo() {
+                if (!checkpointState) checkpointState = createDefaultCheckpoint();
+                checkpointState.ammo = Math.min(MAX_AMMO, Math.max(checkpointState.ammo || 0, clipAmmo));
+            }
+
+            function restoreCheckpointState() {
+                const state = checkpointState || createDefaultCheckpoint();
+                unlockedWeapons = [...new Set(['int', ...(state.unlockedWeapons || ['int'])])];
+                claimedUpgrades.clear();
+                (state.claimedUpgrades || []).forEach(type => claimedUpgrades.add(type));
+                missionIndex = THREE.MathUtils.clamp(state.missionIndex || 0, 0, missions.length - 1);
+                const weaponToRestore = state.currentWeapon && unlockedWeapons.includes(state.currentWeapon) ? state.currentWeapon : unlockedWeapons[unlockedWeapons.length - 1];
+                currentWeaponIndex = Math.max(0, unlockedWeapons.indexOf(weaponToRestore));
+                clipAmmo = Math.min(MAX_AMMO, Math.max(MIN_RESPAWN_AMMO, state.ammo || STARTING_AMMO));
+                reserveAmmo = 0;
+                updateWeaponMaterial();
+            }
+
+            function respawnFromCheckpoint() {
+                if (isDirectoryTransitioning) return;
+                isGameRunning = false;
+                isGameOver = false;
+                activeWave = null;
+                isDirectoryTransitioning = true;
+                showLoadingScreen('/');
+
+                setTimeout(() => {
+                    health = 100;
+                    stamina = MAX_STAMINA;
+                    isReloading = false;
+                    rapidFireUntil = 0;
+                    playerDeathVoiceQueued = false;
+                    finalBossSpawned = false;
+                    finalBossDefeated = false;
+                    desktopController.userData.isSelecting = false;
+                    desktopController.userData.nextShot = 0;
+                    keysPressed.clear();
+                    restoreCheckpointState();
+                    loadDirectory('/');
+                    updateHUD('CHECKPOINT RESTAURADO');
+                    notifyTecGPT('Checkpoint restaurado. Regresaste al directorio principal con tu último modo de tipado disponible.');
+                    hideLoadingScreen();
+                    isDirectoryTransitioning = false;
+                    isGameRunning = true;
+                }, 650);
             }
 
             // --- NOTIFICACIONES Y VOZ ---
@@ -745,7 +940,7 @@
 
                 vrHudCtx.fillStyle = 'rgba(0, 255, 255, 0.88)';
                 vrHudCtx.font = 'bold 28px Courier New';
-                vrHudCtx.fillText(`BALAS: ${clipAmmo}`, 440, 318);
+                vrHudCtx.fillText(`BALAS: ${clipAmmo}/${MAX_AMMO}`, 440, 318);
 
                 if (clock.getElapsedTime() < rapidFireUntil) {
                     vrHudCtx.fillStyle = 'rgba(255, 255, 255, 0.92)';
@@ -761,57 +956,92 @@
                 const mapSize = 128;
                 const offsetX = 776;
                 const offsetY = hudCanvas.height - mapSize;
-                const cellW = mapSize / GRID_SIZE;
-                const cellH = mapSize / GRID_SIZE;
+                const centerX = offsetX + mapSize / 2;
+                const centerY = offsetY + mapSize / 2;
+                const scale = mapSize / GRID_SIZE;
+                const heading = playerDolly ? playerDolly.rotation.y : 0;
 
-                vrHudCtx.fillStyle = 'rgba(0, 10, 0, 0.50)';
+                vrHudCtx.save();
+                vrHudCtx.fillStyle = 'rgba(0, 10, 0, 0.58)';
                 vrHudCtx.fillRect(offsetX, offsetY, mapSize, mapSize);
-                vrHudCtx.strokeStyle = 'rgba(0, 255, 0, 0.72)';
-                vrHudCtx.lineWidth = 2;
-                vrHudCtx.strokeRect(offsetX, offsetY, mapSize, mapSize);
+                vrHudCtx.beginPath();
+                vrHudCtx.rect(offsetX, offsetY, mapSize, mapSize);
+                vrHudCtx.clip();
+
+                vrHudCtx.translate(centerX, centerY);
+                vrHudCtx.rotate(heading);
+
+                const playerGX = playerDolly.position.x / TILE_SIZE;
+                const playerGZ = playerDolly.position.z / TILE_SIZE;
 
                 for (let z = 0; z < GRID_SIZE; z++) {
                     for (let x = 0; x < GRID_SIZE; x++) {
-                        if (mapGrid[z] && mapGrid[z][x] === 1) {
-                            vrHudCtx.fillStyle = 'rgba(0, 120, 0, 0.68)';
-                            vrHudCtx.fillRect(offsetX + x * cellW, offsetY + z * cellH, cellW + 1, cellH + 1);
-                        } else if (mapGrid[z] && mapGrid[z][x] === 2) {
-                            vrHudCtx.fillStyle = 'rgba(230, 210, 0, 0.82)';
-                            vrHudCtx.fillRect(offsetX + x * cellW, offsetY + z * cellH, cellW, cellH);
+                        if (!mapGrid[z]) continue;
+                        const rx = (x - playerGX) * scale;
+                        const rz = (z - playerGZ) * scale;
+                        if (Math.abs(rx) > mapSize || Math.abs(rz) > mapSize) continue;
+
+                        if (mapGrid[z][x] === 1) {
+                            vrHudCtx.fillStyle = 'rgba(0, 120, 0, 0.70)';
+                            vrHudCtx.fillRect(rx - scale / 2, rz - scale / 2, scale + 1, scale + 1);
+                        } else if (mapGrid[z][x] === 2) {
+                            vrHudCtx.fillStyle = 'rgba(230, 210, 0, 0.86)';
+                            vrHudCtx.fillRect(rx - scale / 2, rz - scale / 2, scale, scale);
                         }
                     }
                 }
 
                 const nextDoor = getNextCampaignDoor();
                 if (nextDoor) {
-                    const gx = Math.round(nextDoor.mesh.position.x / TILE_SIZE);
-                    const gz = Math.round(nextDoor.mesh.position.z / TILE_SIZE);
+                    const gx = nextDoor.mesh.position.x / TILE_SIZE;
+                    const gz = nextDoor.mesh.position.z / TILE_SIZE;
+                    const rx = (gx - playerGX) * scale;
+                    const rz = (gz - playerGZ) * scale;
                     const pulse = 0.45 + 0.55 * ((Math.sin(clock.getElapsedTime() * 6.0) + 1) / 2);
                     vrHudCtx.save();
                     vrHudCtx.shadowColor = '#00ff66';
                     vrHudCtx.shadowBlur = 18 + pulse * 14;
                     vrHudCtx.strokeStyle = `rgba(0, 255, 80, ${0.65 + pulse * 0.35})`;
                     vrHudCtx.lineWidth = 4;
-                    vrHudCtx.strokeRect(offsetX + gx * cellW - 2, offsetY + gz * cellH - 2, cellW + 4, cellH + 4);
+                    vrHudCtx.strokeRect(rx - scale / 2 - 2, rz - scale / 2 - 2, scale + 4, scale + 4);
                     vrHudCtx.fillStyle = `rgba(0, 255, 80, ${0.20 + pulse * 0.25})`;
-                    vrHudCtx.fillRect(offsetX + gx * cellW, offsetY + gz * cellH, cellW, cellH);
+                    vrHudCtx.fillRect(rx - scale / 2, rz - scale / 2, scale, scale);
                     vrHudCtx.restore();
                 }
 
-                vrHudCtx.fillStyle = '#ffffff';
-                vrHudCtx.beginPath();
-                vrHudCtx.arc(offsetX + (playerDolly.position.x / TILE_SIZE) * cellW, offsetY + (playerDolly.position.z / TILE_SIZE) * cellH, 4.0, 0, Math.PI * 2);
-                vrHudCtx.fill();
-
                 vrHudCtx.fillStyle = '#ff0000';
                 enemies.forEach(e => {
-                    vrHudCtx.fillRect(offsetX + (e.mesh.position.x / TILE_SIZE) * cellW - 3, offsetY + (e.mesh.position.z / TILE_SIZE) * cellH - 3, 6, 6);
+                    const rx = ((e.mesh.position.x / TILE_SIZE) - playerGX) * scale;
+                    const rz = ((e.mesh.position.z / TILE_SIZE) - playerGZ) * scale;
+                    vrHudCtx.fillRect(rx - 3, rz - 3, 6, 6);
                 });
 
                 vrHudCtx.fillStyle = '#00ff00';
                 pickups.forEach(p => {
-                    vrHudCtx.fillRect(offsetX + (p.mesh.position.x / TILE_SIZE) * cellW - 2, offsetY + (p.mesh.position.z / TILE_SIZE) * cellH - 2, 4, 4);
+                    const rx = ((p.mesh.position.x / TILE_SIZE) - playerGX) * scale;
+                    const rz = ((p.mesh.position.z / TILE_SIZE) - playerGZ) * scale;
+                    vrHudCtx.fillRect(rx - 2, rz - 2, 4, 4);
                 });
+
+                vrHudCtx.restore();
+
+                vrHudCtx.strokeStyle = 'rgba(0, 255, 0, 0.72)';
+                vrHudCtx.lineWidth = 2;
+                vrHudCtx.strokeRect(offsetX, offsetY, mapSize, mapSize);
+
+                // El jugador queda fijo al centro; la punta indica la dirección de mirada.
+                vrHudCtx.fillStyle = '#ffffff';
+                vrHudCtx.beginPath();
+                vrHudCtx.moveTo(centerX, centerY - 7);
+                vrHudCtx.lineTo(centerX - 5, centerY + 5);
+                vrHudCtx.lineTo(centerX + 5, centerY + 5);
+                vrHudCtx.closePath();
+                vrHudCtx.fill();
+
+                vrHudCtx.fillStyle = 'rgba(170, 255, 190, 0.78)';
+                vrHudCtx.font = 'bold 14px Courier New';
+                vrHudCtx.textAlign = 'center';
+                vrHudCtx.fillText('FWD', centerX, offsetY + 14);
             }
 
             function getNextCampaignDoor() {
@@ -1200,9 +1430,12 @@
                 const mission = missions[missionIndex];
                 if (mission && currentPath === mission.route && mission.unlock !== 'auto') {
                     missionIndex++;
+                    saveCheckpoint('CHECKPOINT ACTUALIZADO');
                     if (missions[missionIndex]) {
                         notifyTecGPT(missions[missionIndex].intro);
                     }
+                } else if (currentPath === '/') {
+                    saveCheckpointAmmo();
                 }
             }
 
@@ -1526,9 +1759,12 @@
 
             function collectPickup(pickup) {
                 if (pickup.kind === 'ammo') {
-                    clipAmmo = Math.min(MAX_RESERVE, clipAmmo + 24);
+                    const beforeAmmo = clipAmmo;
+                    clipAmmo = Math.min(MAX_AMMO, clipAmmo + 24);
+                    saveCheckpointAmmo();
                     playPowerupSound();
-                    updateHUD('+24 BALAS');
+                    const gainedAmmo = clipAmmo - beforeAmmo;
+                    updateHUD(gainedAmmo > 0 ? `+${gainedAmmo} BALAS` : 'MUNICIÓN LLENA');
                 } else if (pickup.kind === 'health') {
                     health = Math.min(100, health + 24);
                     playCureSound();
@@ -1543,6 +1779,7 @@
                     if (!unlockedWeapons.includes(type)) unlockedWeapons.push(type);
                     claimedUpgrades.add(type);
                     currentWeaponIndex = unlockedWeapons.indexOf(type);
+                    saveCheckpoint(`${weaponNames[type]} CHECKPOINT`);
                     updateWeaponMaterial();
                     updateHUD(`${weaponNames[type]} DESBLOQUEADA`);
 
@@ -1617,10 +1854,22 @@
                 if (ctrl.userData.nextShot && now < ctrl.userData.nextShot) return;
                 ctrl.userData.nextShot = now + fireDelay;
 
-                const matrix = new THREE.Matrix4().extractRotation(wpnMesh.matrixWorld);
-                const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(matrix).normalize();
-                const startPos = new THREE.Vector3();
-                wpnMesh.getWorldPosition(startPos);
+                let direction;
+                let startPos;
+                if (ctrl.userData && ctrl.userData.isDesktop) {
+                    direction = new THREE.Vector3();
+                    camera.getWorldDirection(direction).normalize();
+                    startPos = new THREE.Vector3();
+                    camera.getWorldPosition(startPos);
+                    startPos.addScaledVector(direction, 0.85);
+                    startPos.y -= 0.10;
+                } else {
+                    if (wpnMesh.updateMatrixWorld) wpnMesh.updateMatrixWorld(true);
+                    const matrix = new THREE.Matrix4().extractRotation(wpnMesh.matrixWorld);
+                    direction = new THREE.Vector3(0, 0, -1).applyMatrix4(matrix).normalize();
+                    startPos = new THREE.Vector3();
+                    wpnMesh.getWorldPosition(startPos);
+                }
 
                 if (isGameOver && gameOverMesh) {
                     shootRestartRay(startPos, direction);
@@ -1885,7 +2134,7 @@
                                 playerDeathVoiceQueued = true;
                                 notifyTecGPT('¡Boss, ¿estás bien? No me aparece tu ubicación, Boss ¡por favor, responde!');
                             }
-                            showEndScreen('KERNEL PANIC', `SCORE FINAL: ${score}`, '#ff0000');
+                            respawnFromCheckpoint();
                         } else {
                             updateHUD('¡SISTEMA DAÑADO!');
                         }
@@ -2055,67 +2304,55 @@
 
             // --- MOVIMIENTO / PUERTAS ---
             function updatePlayerMovement(delta) {
-                const session = renderer.xr.getSession();
-                if (!session) return;
-
                 if (weaponSwitchCooldown > 0) weaponSwitchCooldown -= delta;
                 if (doorWarningCooldown > 0) doorWarningCooldown -= delta;
 
-                for (const source of session.inputSources) {
-                    if (!source.gamepad) continue;
+                const forwardInput = (keysPressed.has('KeyW') || keysPressed.has('ArrowUp') ? 1 : 0)
+                    - (keysPressed.has('KeyS') || keysPressed.has('ArrowDown') ? 1 : 0);
+                const strafeInput = (keysPressed.has('KeyD') || keysPressed.has('ArrowRight') ? 1 : 0)
+                    - (keysPressed.has('KeyA') || keysPressed.has('ArrowLeft') ? 1 : 0);
+                const isMoving = forwardInput !== 0 || strafeInput !== 0;
+                const wantsSprint = keysPressed.has('ShiftLeft') || keysPressed.has('ShiftRight');
+                const isSprinting = isMoving && wantsSprint && stamina > 0;
 
-                    let axX = 0;
-                    let axY = 0;
-                    if (source.gamepad.axes.length >= 4) {
-                        axX = source.gamepad.axes[2];
-                        axY = source.gamepad.axes[3];
-                    } else if (source.gamepad.axes.length >= 2) {
-                        axX = source.gamepad.axes[0];
-                        axY = source.gamepad.axes[1];
-                    }
-                    if (Math.abs(axX) < 0.2) axX = 0;
-                    if (Math.abs(axY) < 0.2) axY = 0;
-
-                    if (source.handedness === 'left') {
-                        let isSprinting = false;
-                        if (source.gamepad.buttons[1] && source.gamepad.buttons[1].pressed && stamina > 0) {
-                            isSprinting = true;
-                            stamina = Math.max(0, stamina - 24 * delta);
-                        } else {
-                            stamina = Math.min(MAX_STAMINA, stamina + 32 * delta);
-                        }
-
-                        if (axX !== 0 || axY !== 0) {
-                            const moveSpeed = (isSprinting && stamina > 0 ? 11 : 6) * delta;
-                            const fwDir = new THREE.Vector3();
-                            camera.getWorldDirection(fwDir);
-                            fwDir.y = 0;
-                            fwDir.normalize();
-                            const rtDir = new THREE.Vector3().copy(fwDir).cross(camera.up).normalize();
-
-                            const moveVec = new THREE.Vector3();
-                            moveVec.addScaledVector(fwDir, -axY * moveSpeed);
-                            moveVec.addScaledVector(rtDir, axX * moveSpeed);
-
-                            const px = playerDolly.position.x + moveVec.x;
-                            const pz = playerDolly.position.z + moveVec.z;
-                            const pBox = new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(px, 1, pz), new THREE.Vector3(2, 2, 2));
-                            if (!hitsWorldCollision(pBox)) {
-                                playerDolly.position.x = px;
-                                playerDolly.position.z = pz;
-                            }
-                        }
-                    }
-
-                    if (source.handedness === 'right') {
-                        const stickSwitchActive = Math.abs(axX) > 0.65;
-                        if (stickSwitchActive && !rightStickWeaponAxisWasActive && weaponSwitchCooldown <= 0) {
-                            switchWeapon(axX > 0 ? 1 : -1);
-                            weaponSwitchCooldown = 0.28;
-                        }
-                        rightStickWeaponAxisWasActive = stickSwitchActive;
-                    }
+                if (isSprinting) {
+                    stamina = Math.max(0, stamina - 24 * delta);
+                } else {
+                    stamina = Math.min(MAX_STAMINA, stamina + 32 * delta);
                 }
+
+                if (!isMoving) return;
+
+                const moveSpeed = (isSprinting && stamina > 0 ? 11 : 6) * delta;
+                const fwDir = new THREE.Vector3();
+                camera.getWorldDirection(fwDir);
+                fwDir.y = 0;
+                if (fwDir.lengthSq() < 0.0001) fwDir.set(0, 0, -1);
+                fwDir.normalize();
+                const rtDir = new THREE.Vector3().copy(fwDir).cross(camera.up).normalize();
+
+                const moveVec = new THREE.Vector3();
+                moveVec.addScaledVector(fwDir, forwardInput * moveSpeed);
+                moveVec.addScaledVector(rtDir, strafeInput * moveSpeed);
+
+                if (moveVec.lengthSq() > moveSpeed * moveSpeed) moveVec.setLength(moveSpeed);
+
+                const tryMove = (dx, dz) => {
+                    const px = playerDolly.position.x + dx;
+                    const pz = playerDolly.position.z + dz;
+                    const pBox = new THREE.Box3().setFromCenterAndSize(
+                        new THREE.Vector3(px, 1, pz),
+                        new THREE.Vector3(2, 2, 2)
+                    );
+                    if (!hitsWorldCollision(pBox)) {
+                        playerDolly.position.x = px;
+                        playerDolly.position.z = pz;
+                    }
+                };
+
+                // Ejes separados para que el jugador pueda deslizarse en paredes en vez de atorarse.
+                tryMove(moveVec.x, 0);
+                tryMove(0, moveVec.z);
             }
 
             function hitsWorldCollision(box) {
@@ -2210,11 +2447,11 @@
                 ctx.fillText(subtitle, 512, 485);
                 ctx.fillStyle = '#0f0';
                 ctx.font = 'bold 54px Courier New';
-                ctx.fillText('[ DISPARA AQUÍ ]', 512, 740);
-                ctx.fillText('PARA REINICIAR', 512, 830);
+                ctx.fillText('[ CLIC PARA ]', 512, 740);
+                ctx.fillText('REINICIAR', 512, 830);
 
                 const tex = new THREE.CanvasTexture(canvas);
-                const geo = new THREE.PlaneGeometry(1.5, 1.5);
+                const geo = new THREE.PlaneGeometry(1.95, 1.45);
                 const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false });
                 gameOverMesh = new THREE.Mesh(geo, mat);
                 gameOverMesh.renderOrder = 1002;
