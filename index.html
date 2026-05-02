@@ -234,7 +234,7 @@
             hudCanvas.width = 1280;
             hudCanvas.height = 320;
             const vrHudCtx = hudCanvas.getContext('2d');
-            const vrHudTex = new THREE.CanvasTexture(hudCanvas);
+            const vrHudTex = fastCanvasTexture(hudCanvas);
             let vrHudMesh;
 
             // --- NOTIFICACIONES TecGPT ---
@@ -242,7 +242,7 @@
             notificationCanvas.width = 1200;
             notificationCanvas.height = 260;
             const notificationCtx = notificationCanvas.getContext('2d');
-            const notificationTex = new THREE.CanvasTexture(notificationCanvas);
+            const notificationTex = fastCanvasTexture(notificationCanvas);
             const notificationQueue = [];
             let activeNotification = null;
             let notificationStartTime = 0;
@@ -254,6 +254,96 @@
             let currentTecGPTAudio = null;
             let notificationPreparing = false;
             const soundCache = new Map();
+
+            // --- OPTIMIZACIÓN / RECURSOS COMPARTIDOS ---
+            // Capar pixel ratio es una de las ganancias más grandes en visores: mantiene nitidez razonable y reduce fill-rate.
+            const PERF_PIXEL_RATIO = Math.min(window.devicePixelRatio || 1, 1.35);
+            const SOUND_POOL_SIZE = 5;
+            const PRELOAD_SOUNDS = ['shot.mp3', 'enemy_kill.mp3', 'cure.mp3', 'powerup.mp3', 'damage.mp3', 'door_open.mp3', 'error.mp3'];
+
+            const WALL_GEOMETRY = new THREE.BoxGeometry(TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            const WALL_MATERIAL = new THREE.MeshLambertMaterial({ color: 0x002200 });
+            const WALL_WIRE_MATERIAL = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+            const DOOR_GEOMETRY = new THREE.BoxGeometry(TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            const ENEMY_GEOMETRY_CACHE = new Map();
+            const LASER_GEOMETRY_NORMAL = new THREE.CylinderGeometry(0.05, 0.05, 1.6, 8).rotateX(Math.PI / 2);
+            const LASER_GEOMETRY_AUTO = new THREE.CylinderGeometry(0.075, 0.075, 1.6, 8).rotateX(Math.PI / 2);
+            const LASER_MATERIALS = new Map();
+            const PATH_DIRS = [
+                { x: 0, z: -1, cost: 1 }, { x: 0, z: 1, cost: 1 }, { x: -1, z: 0, cost: 1 }, { x: 1, z: 0, cost: 1 },
+                { x: -1, z: -1, cost: 1.4 }, { x: 1, z: -1, cost: 1.4 }, { x: -1, z: 1, cost: 1.4 }, { x: 1, z: 1, cost: 1.4 }
+            ];
+            const TMP = {
+                v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3(), v4: new THREE.Vector3(),
+                forward: new THREE.Vector3(), right: new THREE.Vector3(), move: new THREE.Vector3(),
+                matrix: new THREE.Matrix4(), raycaster: new THREE.Raycaster(), rayHits: [], box: new THREE.Box3()
+            };
+            const MOVE_CANDIDATES = Array.from({ length: 8 }, () => new THREE.Vector3());
+
+            function fastCanvasTexture(canvas) {
+                const tex = new THREE.CanvasTexture(canvas);
+                tex.generateMipmaps = false;
+                tex.minFilter = THREE.LinearFilter;
+                tex.magFilter = THREE.LinearFilter;
+                return tex;
+            }
+
+            function getSharedBoxGeometry(size) {
+                const key = Number(size).toFixed(2);
+                if (!ENEMY_GEOMETRY_CACHE.has(key)) {
+                    ENEMY_GEOMETRY_CACHE.set(key, new THREE.BoxGeometry(size, size, size));
+                }
+                return ENEMY_GEOMETRY_CACHE.get(key);
+            }
+
+            function getLaserMaterial(type) {
+                const key = type || 'int';
+                if (!LASER_MATERIALS.has(key)) {
+                    LASER_MATERIALS.set(key, new THREE.MeshBasicMaterial({ color: weaponColors[key] || 0x00ff00 }));
+                }
+                return LASER_MATERIALS.get(key);
+            }
+
+            function gridIndexFromWorld(value) {
+                return Math.floor(value / TILE_SIZE);
+            }
+
+            function hitsGridCollisionXZ(x, z, radius = 1.0, includeLockedDoors = true) {
+                const minX = gridIndexFromWorld(x - radius);
+                const maxX = gridIndexFromWorld(x + radius);
+                const minZ = gridIndexFromWorld(z - radius);
+                const maxZ = gridIndexFromWorld(z + radius);
+
+                for (let gz = minZ; gz <= maxZ; gz++) {
+                    if (gz < 0 || gz >= GRID_SIZE) return true;
+                    for (let gx = minX; gx <= maxX; gx++) {
+                        if (gx < 0 || gx >= GRID_SIZE) return true;
+                        if (mapGrid[gz] && mapGrid[gz][gx] === 1) return true;
+                    }
+                }
+
+                if (includeLockedDoors) {
+                    for (let i = 0; i < doors.length; i++) {
+                        const d = doors[i];
+                        if (d.locked && d.gx >= minX && d.gx <= maxX && d.gz >= minZ && d.gz <= maxZ) return true;
+                    }
+                }
+                return false;
+            }
+
+            function preloadSounds(fileNames = PRELOAD_SOUNDS) {
+                fileNames.forEach(name => {
+                    if (soundCache.has(name)) return;
+                    const pool = [];
+                    for (let i = 0; i < SOUND_POOL_SIZE; i++) {
+                        const a = new Audio(name);
+                        a.preload = 'auto';
+                        a.load();
+                        pool.push(a);
+                    }
+                    soundCache.set(name, { pool, index: 0 });
+                });
+            }
 
             init();
 
@@ -268,8 +358,8 @@
                 const ambientLight = new THREE.AmbientLight(0x00aa00, 1.15);
                 scene.add(ambientLight);
 
-                renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-                renderer.setPixelRatio(window.devicePixelRatio);
+                renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, powerPreference: 'high-performance' });
+                renderer.setPixelRatio(PERF_PIXEL_RATIO);
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 renderer.xr.enabled = true;
                 document.getElementById('game-container').appendChild(renderer.domElement);
@@ -381,7 +471,7 @@
                 canvas.width = 1024;
                 canvas.height = 512;
                 const ctx = canvas.getContext('2d');
-                const tex = new THREE.CanvasTexture(canvas);
+                const tex = fastCanvasTexture(canvas);
                 const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 });
                 const mesh = new THREE.Mesh(new THREE.PlaneGeometry(3.5, 2.2), mat);
                 // Se dibuja detrás del HUD y de TecGPT para oscurecer solo el mundo.
@@ -439,6 +529,7 @@
                 isDirectoryTransitioning = false;
                 lastBehindWarningTime = -999;
                 playerDeathVoiceQueued = false;
+                preloadSounds();
                 if (loadingMesh) loadingMesh.material.opacity = 0;
                 unlockedWeapons = ['int'];
                 currentWeaponIndex = 0;
@@ -759,38 +850,38 @@
                 const offsetY = hudCanvas.height - mapSize;
                 const centerX = offsetX + mapSize / 2;
                 const centerY = offsetY + mapSize / 2;
-                const worldSpan = GRID_SIZE * TILE_SIZE;
-                const scale = mapSize / worldSpan;
+                const scale = mapSize / (GRID_SIZE * TILE_SIZE);
 
-                const forward = new THREE.Vector3();
-                camera.getWorldDirection(forward);
-                forward.y = 0;
-                if (forward.lengthSq() < 0.001) forward.set(0, 0, -1);
-                forward.normalize();
-                const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
+                camera.getWorldDirection(TMP.forward);
+                TMP.forward.y = 0;
+                if (TMP.forward.lengthSq() < 0.001) TMP.forward.set(0, 0, -1);
+                TMP.forward.normalize();
+                const fx = TMP.forward.x;
+                const fz = TMP.forward.z;
+                const rx = -fz;
+                const rz = fx;
+                const px = playerDolly.position.x;
+                const pz = playerDolly.position.z;
 
-                function worldToMini(wx, wz) {
-                    const dx = wx - playerDolly.position.x;
-                    const dz = wz - playerDolly.position.z;
-                    const localX = dx * right.x + dz * right.z;
-                    const localY = dx * forward.x + dz * forward.z;
-                    return {
-                        x: centerX + localX * scale,
-                        y: centerY - localY * scale
-                    };
+                function miniX(wx, wz) {
+                    return centerX + ((wx - px) * rx + (wz - pz) * rz) * scale;
                 }
-
+                function miniY(wx, wz) {
+                    return centerY - ((wx - px) * fx + (wz - pz) * fz) * scale;
+                }
                 function drawRotatedCell(gx, gz, fillStyle, strokeStyle = null, lineWidth = 1) {
                     const half = TILE_SIZE / 2;
-                    const corners = [
-                        worldToMini(gx * TILE_SIZE - half, gz * TILE_SIZE - half),
-                        worldToMini(gx * TILE_SIZE + half, gz * TILE_SIZE - half),
-                        worldToMini(gx * TILE_SIZE + half, gz * TILE_SIZE + half),
-                        worldToMini(gx * TILE_SIZE - half, gz * TILE_SIZE + half)
-                    ];
+                    const wx = gx * TILE_SIZE;
+                    const wz = gz * TILE_SIZE;
+                    const x1 = miniX(wx - half, wz - half), y1 = miniY(wx - half, wz - half);
+                    const x2 = miniX(wx + half, wz - half), y2 = miniY(wx + half, wz - half);
+                    const x3 = miniX(wx + half, wz + half), y3 = miniY(wx + half, wz + half);
+                    const x4 = miniX(wx - half, wz + half), y4 = miniY(wx - half, wz + half);
                     vrHudCtx.beginPath();
-                    vrHudCtx.moveTo(corners[0].x, corners[0].y);
-                    for (let i = 1; i < corners.length; i++) vrHudCtx.lineTo(corners[i].x, corners[i].y);
+                    vrHudCtx.moveTo(x1, y1);
+                    vrHudCtx.lineTo(x2, y2);
+                    vrHudCtx.lineTo(x3, y3);
+                    vrHudCtx.lineTo(x4, y4);
                     vrHudCtx.closePath();
                     if (fillStyle) {
                         vrHudCtx.fillStyle = fillStyle;
@@ -825,29 +916,30 @@
 
                 const nextDoor = getNextCampaignDoor();
                 if (nextDoor) {
-                    const gx = Math.round(nextDoor.mesh.position.x / TILE_SIZE);
-                    const gz = Math.round(nextDoor.mesh.position.z / TILE_SIZE);
                     const pulse = 0.45 + 0.55 * ((Math.sin(clock.getElapsedTime() * 6.0) + 1) / 2);
                     vrHudCtx.save();
                     vrHudCtx.shadowColor = '#00ff66';
                     vrHudCtx.shadowBlur = 18 + pulse * 14;
-                    drawRotatedCell(gx, gz, `rgba(0, 255, 80, ${0.22 + pulse * 0.28})`, `rgba(0, 255, 80, ${0.66 + pulse * 0.34})`, 4);
+                    drawRotatedCell(nextDoor.gx, nextDoor.gz, `rgba(0, 255, 80, ${0.22 + pulse * 0.28})`, `rgba(0, 255, 80, ${0.66 + pulse * 0.34})`, 4);
                     vrHudCtx.restore();
                 }
 
                 vrHudCtx.fillStyle = '#ff0000';
-                enemies.forEach(e => {
-                    const p = worldToMini(e.mesh.position.x, e.mesh.position.z);
-                    vrHudCtx.fillRect(p.x - 3, p.y - 3, 6, 6);
-                });
+                for (let i = 0; i < enemies.length; i++) {
+                    const e = enemies[i];
+                    const mx = miniX(e.mesh.position.x, e.mesh.position.z);
+                    const my = miniY(e.mesh.position.x, e.mesh.position.z);
+                    vrHudCtx.fillRect(mx - 3, my - 3, 6, 6);
+                }
 
                 vrHudCtx.fillStyle = '#00ff00';
-                pickups.forEach(pickup => {
-                    const p = worldToMini(pickup.mesh.position.x, pickup.mesh.position.z);
-                    vrHudCtx.fillRect(p.x - 2, p.y - 2, 4, 4);
-                });
+                for (let i = 0; i < pickups.length; i++) {
+                    const pickup = pickups[i];
+                    const mx = miniX(pickup.mesh.position.x, pickup.mesh.position.z);
+                    const my = miniY(pickup.mesh.position.x, pickup.mesh.position.z);
+                    vrHudCtx.fillRect(mx - 2, my - 2, 4, 4);
+                }
 
-                // El jugador queda al centro. La flecha siempre apunta hacia arriba porque el mapa rota con su perspectiva.
                 vrHudCtx.fillStyle = '#ffffff';
                 vrHudCtx.beginPath();
                 vrHudCtx.moveTo(centerX, centerY - 7);
@@ -1008,13 +1100,14 @@
                 if (gx === 0 && mapGrid[gz]) mapGrid[gz][gx + 1] = 0;
                 if (gx === GRID_SIZE - 1 && mapGrid[gz]) mapGrid[gz][gx - 1] = 0;
 
-                const doorGeo = new THREE.BoxGeometry(TILE_SIZE, TILE_SIZE, TILE_SIZE);
-                const mesh = new THREE.Mesh(doorGeo, new THREE.MeshBasicMaterial({ map: makeDoorTexture(label, color, false, false) }));
+                const mesh = new THREE.Mesh(DOOR_GEOMETRY, new THREE.MeshBasicMaterial({ map: makeDoorTexture(label, color, false, false) }));
                 mesh.position.set(gx * TILE_SIZE, TILE_SIZE / 2, gz * TILE_SIZE);
                 scene.add(mesh);
 
                 doors.push({
                     mesh,
+                    gx,
+                    gz,
                     label,
                     targetPath,
                     color,
@@ -1032,8 +1125,10 @@
                     door.roomLocked = !roomCleared;
                     door.routeLocked = !door.isParentDoor && !isPathAccessible(door.targetPath);
                     door.locked = door.roomLocked || door.routeLocked;
+                    const oldTex = door.mesh.material.map;
                     const tex = makeDoorTexture(door.label, door.color, door.locked, door.routeLocked);
                     door.mesh.material.map = tex;
+                    if (oldTex && oldTex.dispose) oldTex.dispose();
                     door.mesh.material.needsUpdate = true;
                     door.box.setFromObject(door.mesh);
                 });
@@ -1062,7 +1157,7 @@
                     ctx.font = 'bold 48px Courier New';
                     ctx.fillText(label, 256, 292);
                 }
-                return new THREE.CanvasTexture(canvas);
+                return fastCanvasTexture(canvas);
             }
 
             function isPathAccessible(path) {
@@ -1086,18 +1181,15 @@
             }
 
             function buildWalls() {
-                const wallGeo = new THREE.BoxGeometry(TILE_SIZE, TILE_SIZE, TILE_SIZE);
-                const wireMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
-                const solidMat = new THREE.MeshLambertMaterial({ color: 0x002200 });
-
                 for (let z = 0; z < GRID_SIZE; z++) {
                     for (let x = 0; x < GRID_SIZE; x++) {
                         if (mapGrid[z][x] === 1) {
-                            const mesh = new THREE.Mesh(wallGeo, solidMat);
-                            mesh.add(new THREE.Mesh(wallGeo, wireMat));
+                            const mesh = new THREE.Mesh(WALL_GEOMETRY, WALL_MATERIAL);
+                            const wire = new THREE.Mesh(WALL_GEOMETRY, WALL_WIRE_MATERIAL);
+                            mesh.add(wire);
                             mesh.position.set(x * TILE_SIZE, TILE_SIZE / 2, z * TILE_SIZE);
                             scene.add(mesh);
-                            walls.push({ mesh, box: new THREE.Box3().setFromObject(mesh) });
+                            walls.push({ mesh, gx: x, gz: z, box: new THREE.Box3().setFromObject(mesh) });
                             wallMeshes.push(mesh);
                         }
                     }
@@ -1302,7 +1394,7 @@
                     ctx.fillText('FLOATING', 128, 222);
                 }
 
-                return new THREE.CanvasTexture(canvas);
+                return fastCanvasTexture(canvas);
             }
 
             function formatEnemyHp(enemy) {
@@ -1370,7 +1462,7 @@
                 const floating = actualType === 'float';
                 const baseSize = actualType === 'string' ? 3.6 : 3.1;
                 const size = isClassBoss ? 5.2 : baseSize;
-                const mesh = new THREE.Mesh(new THREE.BoxGeometry(size, size, size), material);
+                const mesh = new THREE.Mesh(getSharedBoxGeometry(size), material);
                 const y = floating ? (isClassBoss ? 4.8 : 3.3 + Math.random() * 1.2) : size / 2;
                 mesh.position.set(spot.x * TILE_SIZE, y, spot.z * TILE_SIZE);
 
@@ -1385,6 +1477,9 @@
                     floating,
                     bobOffset: Math.random() * Math.PI * 2,
                     box: new THREE.Box3().setFromObject(mesh),
+                    collisionRadius: isClassBoss ? 2.25 : 1.05,
+                    pathDir: new THREE.Vector3(),
+                    directDir: new THREE.Vector3(),
                     speed: (floating ? 4.7 : 4.0) + Math.min(2.5, score * 0.04) + (config.difficulty || 1) * 0.2 - (isClassBoss ? 0.65 : 0),
                     attackCooldown: 0,
                     spawnAddsCooldown: 0,
@@ -1420,7 +1515,7 @@
                 ctx.font = 'bold 32px Courier New';
                 ctx.fillText('ROOT PROCESS', 256, 366);
 
-                const material = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), color: 0xffffff });
+                const material = new THREE.MeshBasicMaterial({ map: fastCanvasTexture(canvas), color: 0xffffff });
                 const mesh = new THREE.Mesh(new THREE.BoxGeometry(7, 7, 7), material);
                 mesh.position.set(spot.x * TILE_SIZE, 3.5, spot.z * TILE_SIZE);
                 scene.add(mesh);
@@ -1435,6 +1530,9 @@
                     floating: false,
                     bobOffset: 0,
                     box: new THREE.Box3().setFromObject(mesh),
+                    collisionRadius: isClassBoss ? 2.25 : 1.05,
+                    pathDir: new THREE.Vector3(),
+                    directDir: new THREE.Vector3(),
                     speed: 2.3,
                     attackCooldown: 0,
                     spawnAddsCooldown: 4,
@@ -1539,7 +1637,7 @@
                 ctx.textBaseline = 'middle';
                 ctx.fillText(text, 256, 66);
 
-                const texture = new THREE.CanvasTexture(canvas);
+                const texture = fastCanvasTexture(canvas);
                 const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthTest: false });
                 const plane = new THREE.Mesh(new THREE.PlaneGeometry(4.4, 1.1), material);
                 plane.renderOrder = 998;
@@ -1547,14 +1645,16 @@
             }
 
             function updatePickups(delta) {
+                camera.getWorldPosition(TMP.v4);
                 for (let i = pickups.length - 1; i >= 0; i--) {
                     const p = pickups[i];
                     p.mesh.rotation.y += delta * 1.8;
                     p.core.rotation.x += delta * 2.2;
-                    p.label.lookAt(camera.getWorldPosition(new THREE.Vector3()));
-                    p.box.setFromObject(p.mesh);
+                    p.label.lookAt(TMP.v4);
 
-                    if (p.mesh.position.distanceTo(playerDolly.position) < 3.0) {
+                    const dx = p.mesh.position.x - playerDolly.position.x;
+                    const dz = p.mesh.position.z - playerDolly.position.z;
+                    if ((dx * dx + dz * dz) < 9.0) {
                         collectPickup(p);
                         scene.remove(p.mesh);
                         pickups.splice(i, 1);
@@ -1562,8 +1662,10 @@
                 }
 
                 const now = clock.getElapsedTime();
-                if (activeWave && now > nextRandomSupplyTime && pickups.filter(p => p.kind !== 'weapon').length < 3) {
-                    spawnRandomSupply();
+                if (activeWave && now > nextRandomSupplyTime) {
+                    let looseSupplies = 0;
+                    for (let i = 0; i < pickups.length; i++) if (pickups[i].kind !== 'weapon') looseSupplies++;
+                    if (looseSupplies < 3) spawnRandomSupply();
                     nextRandomSupplyTime = now + THREE.MathUtils.randFloat(18, 28);
                 }
             }
@@ -1662,13 +1764,14 @@
                 if (ctrl.userData.nextShot && now < ctrl.userData.nextShot) return;
                 ctrl.userData.nextShot = now + fireDelay;
 
-                const matrix = new THREE.Matrix4().extractRotation(wpnMesh.matrixWorld);
-                const direction = new THREE.Vector3(0, 0, -1).applyMatrix4(matrix).normalize();
-                const startPos = new THREE.Vector3();
+                const matrix = TMP.matrix;
+                matrix.extractRotation(wpnMesh.matrixWorld);
+                const direction = TMP.v1.set(0, 0, -1).applyMatrix4(matrix).normalize();
+                const startPos = TMP.v2;
                 wpnMesh.getWorldPosition(startPos);
 
                 if (isGameOver && gameOverMesh) {
-                    shootRestartRay(startPos, direction);
+                    shootRestartRay(startPos.clone(), direction.clone());
                     return;
                 }
 
@@ -1685,15 +1788,12 @@
                 playShootSound();
 
                 const type = getCurrentWeaponType();
-                const laser = new THREE.Mesh(
-                    new THREE.CylinderGeometry(type === 'auto' ? 0.075 : 0.05, type === 'auto' ? 0.075 : 0.05, 1.6, 8).rotateX(Math.PI / 2),
-                    new THREE.MeshBasicMaterial({ color: weaponColors[type] || 0x00ff00 })
-                );
+                const laser = new THREE.Mesh(type === 'auto' ? LASER_GEOMETRY_AUTO : LASER_GEOMETRY_NORMAL, getLaserMaterial(type));
                 laser.position.copy(startPos);
-                laser.lookAt(startPos.clone().add(direction));
+                laser.lookAt(TMP.v3.copy(startPos).add(direction));
                 scene.add(laser);
 
-                lasers.push({ mesh: laser, dir: direction, speed: 101.4, type, box: new THREE.Box3() });
+                lasers.push({ mesh: laser, dir: direction.clone(), speed: 101.4, type, distance: 0 });
             }
 
             function shootRestartRay(startPos, direction) {
@@ -1715,15 +1815,22 @@
             function updateLasers(delta) {
                 for (let i = lasers.length - 1; i >= 0; i--) {
                     const l = lasers[i];
-                    l.mesh.position.addScaledVector(l.dir, l.speed * delta);
-                    l.box.setFromObject(l.mesh);
+                    const step = l.speed * delta;
+                    l.mesh.position.x += l.dir.x * step;
+                    l.mesh.position.y += l.dir.y * step;
+                    l.mesh.position.z += l.dir.z * step;
+                    l.distance += step;
 
-                    let hit = walls.some(w => l.box.intersectsBox(w.box));
+                    let hit = hitsGridCollisionXZ(l.mesh.position.x, l.mesh.position.z, 0.28, false);
 
                     if (!hit) {
                         for (let j = enemies.length - 1; j >= 0; j--) {
                             const e = enemies[j];
-                            if (l.box.intersectsBox(e.box)) {
+                            const r = (e.collisionRadius || 1.2) + 0.55;
+                            const dx = l.mesh.position.x - e.mesh.position.x;
+                            const dy = l.mesh.position.y - e.mesh.position.y;
+                            const dz = l.mesh.position.z - e.mesh.position.z;
+                            if ((dx * dx + dy * dy + dz * dz) <= r * r) {
                                 hit = true;
                                 damageEnemy(e, j, l.type);
                                 break;
@@ -1731,7 +1838,7 @@
                         }
                     }
 
-                    if (hit || l.mesh.position.distanceTo(playerDolly.position) > 120) {
+                    if (hit || l.distance > 120) {
                         scene.remove(l.mesh);
                         lasers.splice(i, 1);
                     }
@@ -1857,25 +1964,26 @@
 
             function updateFlowField(targetX, targetZ) {
                 for (let z = 0; z < GRID_SIZE; z++) {
-                    for (let x = 0; x < GRID_SIZE; x++) flowField[z][x] = 9999;
+                    flowField[z].fill(9999);
                 }
                 if (targetX < 0 || targetX >= GRID_SIZE || targetZ < 0 || targetZ >= GRID_SIZE) return;
 
                 const queue = [{ x: targetX, z: targetZ, dist: 0 }];
+                let head = 0;
                 flowField[targetZ][targetX] = 0;
-                const dirs = [{ x: 0, z: -1 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 1, z: 0 }, { x: -1, z: -1 }, { x: 1, z: -1 }, { x: -1, z: 1 }, { x: 1, z: 1 }];
 
-                while (queue.length > 0) {
-                    const curr = queue.shift();
-                    for (const d of dirs) {
+                while (head < queue.length) {
+                    const curr = queue[head++];
+                    for (let i = 0; i < PATH_DIRS.length; i++) {
+                        const d = PATH_DIRS[i];
                         const nx = curr.x + d.x;
                         const nz = curr.z + d.z;
                         if (!isWalkableCell(nx, nz)) continue;
                         if (d.x !== 0 && d.z !== 0 && (!isWalkableCell(curr.x + d.x, curr.z) || !isWalkableCell(curr.x, curr.z + d.z))) continue;
-                        const cost = d.x !== 0 && d.z !== 0 ? 1.4 : 1;
-                        if (flowField[nz][nx] > curr.dist + cost) {
-                            flowField[nz][nx] = curr.dist + cost;
-                            queue.push({ x: nx, z: nz, dist: curr.dist + cost });
+                        const nextDist = curr.dist + d.cost;
+                        if (flowField[nz][nx] > nextDist) {
+                            flowField[nz][nx] = nextDist;
+                            queue.push({ x: nx, z: nz, dist: nextDist });
                         }
                     }
                 }
@@ -1904,12 +2012,11 @@
                         }
                     }
 
-                    const dirToPlayer = new THREE.Vector3().subVectors(playerDolly.position, e.mesh.position);
-                    const distToPlayer = dirToPlayer.length();
+                    const directDir = e.directDir || (e.directDir = new THREE.Vector3());
+                    directDir.set(playerDolly.position.x - e.mesh.position.x, 0, playerDolly.position.z - e.mesh.position.z);
+                    const distToPlayer = Math.sqrt(directDir.x * directDir.x + directDir.z * directDir.z);
                     maybeWarnEnemyBehind(e, distToPlayer, time);
-                    const directDir = dirToPlayer.clone();
-                    directDir.y = 0;
-                    if (directDir.length() > 0) directDir.normalize();
+                    if (directDir.lengthSq() > 0) directDir.normalize();
 
                     const hasLOS = hasLineOfSightToPlayer(e, distToPlayer);
                     const pathDir = getPathfindingDirection(e);
@@ -1932,7 +2039,6 @@
                         }
 
                         e.mesh.position.addScaledVector(directDir, -4.5);
-                        e.box.setFromObject(e.mesh);
                     }
                 }
             }
@@ -1941,18 +2047,17 @@
                 if (!isGameRunning || isGameOver || distToPlayer > 11 || distToPlayer < 3.8) return;
                 if (time - lastBehindWarningTime < 9.0) return;
 
-                const forward = new THREE.Vector3();
-                camera.getWorldDirection(forward);
-                forward.y = 0;
-                if (forward.lengthSq() < 0.01) return;
-                forward.normalize();
+                camera.getWorldDirection(TMP.forward);
+                TMP.forward.y = 0;
+                if (TMP.forward.lengthSq() < 0.01) return;
+                TMP.forward.normalize();
 
-                const toEnemy = new THREE.Vector3().subVectors(enemy.mesh.position, playerDolly.position);
-                toEnemy.y = 0;
-                if (toEnemy.lengthSq() < 0.01) return;
-                toEnemy.normalize();
+                TMP.v1.subVectors(enemy.mesh.position, playerDolly.position);
+                TMP.v1.y = 0;
+                if (TMP.v1.lengthSq() < 0.01) return;
+                TMP.v1.normalize();
 
-                if (forward.dot(toEnemy) < -0.58) {
+                if (TMP.forward.dot(TMP.v1) < -0.58) {
                     lastBehindWarningTime = time;
                     notifyTecGPT('¡Boss, detrás de ti!');
                 }
@@ -1960,23 +2065,27 @@
 
             function hasLineOfSightToPlayer(enemy, distToPlayer) {
                 if (distToPlayer > 42) return false;
-                const from = enemy.mesh.position.clone();
-                const to = playerDolly.position.clone();
-                to.y = from.y;
-                const direction = to.sub(from).normalize();
-                const ray = new THREE.Raycaster(from, direction, 0, distToPlayer);
-                return ray.intersectObjects(wallMeshes).length === 0;
+                TMP.v1.copy(enemy.mesh.position);
+                TMP.v2.copy(playerDolly.position);
+                TMP.v2.y = TMP.v1.y;
+                TMP.v3.subVectors(TMP.v2, TMP.v1).normalize();
+                TMP.raycaster.set(TMP.v1, TMP.v3);
+                TMP.raycaster.near = 0;
+                TMP.raycaster.far = distToPlayer;
+                TMP.rayHits.length = 0;
+                TMP.raycaster.intersectObjects(wallMeshes, false, TMP.rayHits);
+                return TMP.rayHits.length === 0;
             }
 
             function getPathfindingDirection(enemy) {
-                const ex = Math.floor(enemy.mesh.position.x / TILE_SIZE);
-                const ez = Math.floor(enemy.mesh.position.z / TILE_SIZE);
+                const ex = gridIndexFromWorld(enemy.mesh.position.x);
+                const ez = gridIndexFromWorld(enemy.mesh.position.z);
                 let bestDist = (flowField[ez] && flowField[ez][ex] !== undefined) ? flowField[ez][ex] : 9999;
                 let bestX = ex;
                 let bestZ = ez;
-                const dirs = [{ x: 0, z: -1 }, { x: 0, z: 1 }, { x: -1, z: 0 }, { x: 1, z: 0 }, { x: -1, z: -1 }, { x: 1, z: -1 }, { x: -1, z: 1 }, { x: 1, z: 1 }];
 
-                for (const d of dirs) {
+                for (let i = 0; i < PATH_DIRS.length; i++) {
+                    const d = PATH_DIRS[i];
                     const nx = ex + d.x;
                     const nz = ez + d.z;
                     if (!isWalkableCell(nx, nz)) continue;
@@ -1988,109 +2097,108 @@
                     }
                 }
 
-                const targetPos = new THREE.Vector3(bestX * TILE_SIZE, enemy.mesh.position.y, bestZ * TILE_SIZE);
-                const dir = targetPos.sub(enemy.mesh.position);
-                dir.y = 0;
-                if (dir.length() > 0.05) dir.normalize();
+                const dir = enemy.pathDir || (enemy.pathDir = new THREE.Vector3());
+                dir.set(bestX * TILE_SIZE - enemy.mesh.position.x, 0, bestZ * TILE_SIZE - enemy.mesh.position.z);
+                if (dir.lengthSq() > 0.0025) dir.normalize();
                 return dir;
             }
 
             function moveEnemyWithSteering(enemy, directDir, pathDir, delta, hasLOS) {
-                const candidates = [];
-                const direct = directDir && directDir.lengthSq() > 0 ? directDir.clone().normalize() : null;
-                const path = pathDir && pathDir.lengthSq() > 0 ? pathDir.clone().normalize() : null;
+                let count = 0;
+                const direct = directDir && directDir.lengthSq() > 0 ? directDir : null;
+                const path = pathDir && pathDir.lengthSq() > 0 ? pathDir : null;
 
-                if (hasLOS && direct) candidates.push(direct);
-                if (hasLOS && direct && path) candidates.push(direct.clone().multiplyScalar(0.72).add(path.clone().multiplyScalar(0.28)).normalize());
-                if (path) candidates.push(path);
+                if (hasLOS && direct) MOVE_CANDIDATES[count++].copy(direct);
+                if (hasLOS && direct && path) MOVE_CANDIDATES[count++].copy(direct).multiplyScalar(0.72).add(TMP.v3.copy(path).multiplyScalar(0.28)).normalize();
+                if (path) MOVE_CANDIDATES[count++].copy(path);
                 if (direct) {
-                    const sideA = new THREE.Vector3(-direct.z, 0, direct.x).normalize();
-                    const sideB = new THREE.Vector3(direct.z, 0, -direct.x).normalize();
-                    candidates.push(direct.clone().multiplyScalar(0.65).add(sideA.multiplyScalar(0.35)).normalize());
-                    candidates.push(direct.clone().multiplyScalar(0.65).add(sideB.multiplyScalar(0.35)).normalize());
+                    MOVE_CANDIDATES[count++].set(-direct.z, 0, direct.x).multiplyScalar(0.35).add(TMP.v3.copy(direct).multiplyScalar(0.65)).normalize();
+                    MOVE_CANDIDATES[count++].set(direct.z, 0, -direct.x).multiplyScalar(0.35).add(TMP.v3.copy(direct).multiplyScalar(0.65)).normalize();
                 }
                 if (path) {
-                    candidates.push(new THREE.Vector3(-path.z, 0, path.x).normalize());
-                    candidates.push(new THREE.Vector3(path.z, 0, -path.x).normalize());
+                    MOVE_CANDIDATES[count++].set(-path.z, 0, path.x).normalize();
+                    MOVE_CANDIDATES[count++].set(path.z, 0, -path.x).normalize();
                 }
 
-                const before = enemy.mesh.position.clone();
-                const beforeDist = before.distanceTo(playerDolly.position);
-                for (const candidate of candidates) {
+                const beforeX = enemy.mesh.position.x;
+                const beforeZ = enemy.mesh.position.z;
+                const dx0 = playerDolly.position.x - beforeX;
+                const dz0 = playerDolly.position.z - beforeZ;
+                const beforeDistSq = dx0 * dx0 + dz0 * dz0;
+
+                for (let i = 0; i < count; i++) {
+                    const candidate = MOVE_CANDIDATES[i];
                     if (!candidate || candidate.lengthSq() === 0) continue;
-                    enemy.mesh.position.copy(before);
-                    enemy.box.setFromObject(enemy.mesh);
+                    enemy.mesh.position.x = beforeX;
+                    enemy.mesh.position.z = beforeZ;
                     if (moveEnemyWithCollision(enemy, candidate, delta)) {
-                        const afterDist = enemy.mesh.position.distanceTo(playerDolly.position);
-                        if (afterDist <= beforeDist + 0.35) return true;
+                        const dx1 = playerDolly.position.x - enemy.mesh.position.x;
+                        const dz1 = playerDolly.position.z - enemy.mesh.position.z;
+                        if ((dx1 * dx1 + dz1 * dz1) <= beforeDistSq + 2.0) return true;
                     }
                 }
 
-                enemy.mesh.position.copy(before);
-                enemy.box.setFromObject(enemy.mesh);
+                enemy.mesh.position.x = beforeX;
+                enemy.mesh.position.z = beforeZ;
                 return false;
             }
 
             function moveEnemyWithCollision(enemy, dir, delta) {
                 if (!dir || dir.lengthSq() === 0) return false;
                 const fullStep = enemy.speed * delta;
-                const subSteps = Math.max(1, Math.ceil(fullStep / 0.75));
+                const subSteps = Math.max(1, Math.ceil(fullStep / 0.9));
                 const step = fullStep / subSteps;
+                const radius = enemy.collisionRadius || (enemy.isFinalBoss ? 2.85 : (enemy.isBoss ? 2.25 : 1.05));
                 let moved = false;
 
                 for (let n = 0; n < subSteps; n++) {
-                    const before = enemy.mesh.position.clone();
-
-                    enemy.mesh.position.x += dir.x * step;
-                    enemy.box.setFromObject(enemy.mesh);
-                    if (enemyHitsWorldCollision(enemy)) enemy.mesh.position.x = before.x;
-
-                    enemy.mesh.position.z += dir.z * step;
-                    enemy.box.setFromObject(enemy.mesh);
-                    if (enemyHitsWorldCollision(enemy)) enemy.mesh.position.z = before.z;
-
-                    enemy.box.setFromObject(enemy.mesh);
-                    moved = moved || enemy.mesh.position.distanceToSquared(before) > 0.0004;
+                    const oldX = enemy.mesh.position.x;
+                    const oldZ = enemy.mesh.position.z;
+                    const nextX = oldX + dir.x * step;
+                    if (!hitsGridCollisionXZ(nextX, oldZ, radius, true)) {
+                        enemy.mesh.position.x = nextX;
+                        moved = true;
+                    }
+                    const nextZ = oldZ + dir.z * step;
+                    if (!hitsGridCollisionXZ(enemy.mesh.position.x, nextZ, radius, true)) {
+                        enemy.mesh.position.z = nextZ;
+                        moved = true;
+                    }
                 }
 
                 return moved;
             }
 
             function getEnemyCollisionBox(enemy) {
-                const size = enemy.isFinalBoss ? 5.4 : (enemy.isBoss ? 4.7 : 1.9);
+                const size = (enemy.collisionRadius || 1.1) * 2;
                 const height = enemy.isFinalBoss ? 6.8 : (enemy.isBoss ? 5.2 : 2.2);
-                return new THREE.Box3().setFromCenterAndSize(
-                    new THREE.Vector3(enemy.mesh.position.x, enemy.isFinalBoss ? 3.4 : (enemy.isBoss ? 2.6 : 1.25), enemy.mesh.position.z),
-                    new THREE.Vector3(size, height, size)
+                TMP.box.setFromCenterAndSize(
+                    TMP.v1.set(enemy.mesh.position.x, enemy.isFinalBoss ? 3.4 : (enemy.isBoss ? 2.6 : 1.25), enemy.mesh.position.z),
+                    TMP.v2.set(size, height, size)
                 );
+                return TMP.box;
             }
 
             function enemyHitsWorldCollision(enemy) {
-                const box = getEnemyCollisionBox(enemy);
-                if (walls.some(w => box.intersectsBox(w.box))) return true;
-                if (doors.some(d => d.locked && box.intersectsBox(d.box))) return true;
-                return false;
+                return hitsGridCollisionXZ(enemy.mesh.position.x, enemy.mesh.position.z, enemy.collisionRadius || 1.05, true);
             }
 
             function nudgeEnemyAwayFromWalls(enemy) {
                 const ex = Math.round(enemy.mesh.position.x / TILE_SIZE);
                 const ez = Math.round(enemy.mesh.position.z / TILE_SIZE);
-                const center = new THREE.Vector3(ex * TILE_SIZE, enemy.mesh.position.y, ez * TILE_SIZE);
-                const toCenter = center.sub(enemy.mesh.position);
-                toCenter.y = 0;
-                if (toCenter.lengthSq() > 0.01) {
-                    toCenter.normalize();
-                    moveEnemyWithCollision(enemy, toCenter, 0.16);
+                TMP.v1.set(ex * TILE_SIZE - enemy.mesh.position.x, 0, ez * TILE_SIZE - enemy.mesh.position.z);
+                if (TMP.v1.lengthSq() > 0.01) {
+                    TMP.v1.normalize();
+                    moveEnemyWithCollision(enemy, TMP.v1, 0.14);
                 }
 
-                const direct = new THREE.Vector3().subVectors(playerDolly.position, enemy.mesh.position);
-                direct.y = 0;
-                if (direct.lengthSq() > 0.01) {
-                    direct.normalize();
-                    const side = Math.random() < 0.5
-                        ? new THREE.Vector3(-direct.z, 0, direct.x)
-                        : new THREE.Vector3(direct.z, 0, -direct.x);
-                    moveEnemyWithCollision(enemy, side.normalize(), 0.08);
+                TMP.v2.subVectors(playerDolly.position, enemy.mesh.position);
+                TMP.v2.y = 0;
+                if (TMP.v2.lengthSq() > 0.01) {
+                    TMP.v2.normalize();
+                    const sideSign = Math.random() < 0.5 ? 1 : -1;
+                    TMP.v3.set(-TMP.v2.z * sideSign, 0, TMP.v2.x * sideSign).normalize();
+                    moveEnemyWithCollision(enemy, TMP.v3, 0.08);
                 }
             }
 
@@ -2128,20 +2236,18 @@
 
                         if (axX !== 0 || axY !== 0) {
                             const moveSpeed = (isSprinting && stamina > 0 ? 11 : 6) * delta;
-                            const fwDir = new THREE.Vector3();
-                            camera.getWorldDirection(fwDir);
-                            fwDir.y = 0;
-                            fwDir.normalize();
-                            const rtDir = new THREE.Vector3().copy(fwDir).cross(camera.up).normalize();
+                            camera.getWorldDirection(TMP.forward);
+                            TMP.forward.y = 0;
+                            TMP.forward.normalize();
+                            TMP.right.copy(TMP.forward).cross(camera.up).normalize();
 
-                            const moveVec = new THREE.Vector3();
-                            moveVec.addScaledVector(fwDir, -axY * moveSpeed);
-                            moveVec.addScaledVector(rtDir, axX * moveSpeed);
+                            TMP.move.set(0, 0, 0);
+                            TMP.move.addScaledVector(TMP.forward, -axY * moveSpeed);
+                            TMP.move.addScaledVector(TMP.right, axX * moveSpeed);
 
-                            const px = playerDolly.position.x + moveVec.x;
-                            const pz = playerDolly.position.z + moveVec.z;
-                            const pBox = new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(px, 1, pz), new THREE.Vector3(2, 2, 2));
-                            if (!hitsWorldCollision(pBox)) {
+                            const px = playerDolly.position.x + TMP.move.x;
+                            const pz = playerDolly.position.z + TMP.move.z;
+                            if (!hitsGridCollisionXZ(px, pz, 1.0, true)) {
                                 playerDolly.position.x = px;
                                 playerDolly.position.z = pz;
                             }
@@ -2160,16 +2266,30 @@
             }
 
             function hitsWorldCollision(box) {
-                if (walls.some(w => box.intersectsBox(w.box))) return true;
-                if (doors.some(d => d.locked && box.intersectsBox(d.box))) return true;
+                const minX = gridIndexFromWorld(box.min.x);
+                const maxX = gridIndexFromWorld(box.max.x);
+                const minZ = gridIndexFromWorld(box.min.z);
+                const maxZ = gridIndexFromWorld(box.max.z);
+                for (let z = minZ; z <= maxZ; z++) {
+                    if (z < 0 || z >= GRID_SIZE) return true;
+                    for (let x = minX; x <= maxX; x++) {
+                        if (x < 0 || x >= GRID_SIZE) return true;
+                        if (mapGrid[z] && mapGrid[z][x] === 1) return true;
+                    }
+                }
+                for (let i = 0; i < doors.length; i++) {
+                    const d = doors[i];
+                    if (d.locked && d.gx >= minX && d.gx <= maxX && d.gz >= minZ && d.gz <= maxZ) return true;
+                }
                 return false;
             }
 
             function updateDoorTransitions() {
                 if (isDirectoryTransitioning) return;
                 for (const d of doors) {
-                    const dist = playerDolly.position.distanceTo(d.mesh.position);
-                    if (dist < TILE_SIZE / 1.55) {
+                    const dx = playerDolly.position.x - d.mesh.position.x;
+                    const dz = playerDolly.position.z - d.mesh.position.z;
+                    if ((dx * dx + dz * dz) < (TILE_SIZE / 1.55) * (TILE_SIZE / 1.55)) {
                         if (d.locked) {
                             if (doorWarningCooldown <= 0) {
                                 if (d.routeLocked) notifyTecGPT('Ruta no autorizada todavía. Sigue la ruta sugerida para eliminar el virus.');
@@ -2188,15 +2308,17 @@
 
             // --- AUDIO ---
             function playSoundResource(fileName, volume = 1.0) {
-                if (!soundCache.has(fileName)) {
-                    const base = new Audio(fileName);
-                    base.preload = 'auto';
-                    base.load();
-                    soundCache.set(fileName, base);
-                }
-                const audio = soundCache.get(fileName).cloneNode(true);
-                audio.volume = volume;
-                audio.play().catch(() => {});
+                if (!soundCache.has(fileName)) preloadSounds([fileName]);
+                const entry = soundCache.get(fileName);
+                if (!entry || !entry.pool || !entry.pool.length) return;
+                const audio = entry.pool[entry.index % entry.pool.length];
+                entry.index = (entry.index + 1) % entry.pool.length;
+                try {
+                    audio.pause();
+                    audio.currentTime = 0;
+                    audio.volume = volume;
+                    audio.play().catch(() => {});
+                } catch (_) {}
             }
 
             function playShootSound() {
@@ -2295,7 +2417,7 @@
                 ctx.fillText('[ DISPARA AQUÍ ]', 512, 740);
                 ctx.fillText('PARA REINICIAR', 512, 830);
 
-                const tex = new THREE.CanvasTexture(canvas);
+                const tex = fastCanvasTexture(canvas);
                 const geo = new THREE.PlaneGeometry(1.5, 1.5);
                 const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false });
                 gameOverMesh = new THREE.Mesh(geo, mat);
@@ -2337,7 +2459,7 @@
                 updateDyingEnemies(delta);
                 updatePickups(delta);
 
-                if (time - lastFlowFieldUpdate > 0.28) {
+                if (time - lastFlowFieldUpdate > 0.34) {
                     const px = Math.floor(playerDolly.position.x / TILE_SIZE);
                     const pz = Math.floor(playerDolly.position.z / TILE_SIZE);
                     updateFlowField(px, pz);
@@ -2346,7 +2468,7 @@
 
                 updateEnemies(delta, time);
 
-                if (time - lastHudUpdate > 0.12) {
+                if (time - lastHudUpdate > 0.16) {
                     updateHUD();
                     lastHudUpdate = time;
                 }
