@@ -325,7 +325,7 @@
                 const notificationMat = new THREE.MeshBasicMaterial({ map: notificationTex, transparent: true, depthTest: false, opacity: 0 });
                 notificationMesh = new THREE.Mesh(notificationGeo, notificationMat);
                 notificationMesh.renderOrder = 1001;
-                notificationMesh.position.set(0, -0.54, -1.18);
+                notificationMesh.position.set(0, -0.68, -1.18);
                 notificationMesh.rotation.x = 0.08;
                 camera.add(notificationMesh);
                 drawNotification('');
@@ -654,15 +654,15 @@
                 const elapsed = now - notificationStartTime;
                 const duration = activeNotification.duration;
                 let alpha = 1;
-                let y = -0.28;
+                let y = -0.46;
 
                 if (elapsed < 0.45) {
                     const t = elapsed / 0.45;
-                    y = THREE.MathUtils.lerp(-0.54, -0.28, easeOutCubic(t));
+                    y = THREE.MathUtils.lerp(-0.72, -0.46, easeOutCubic(t));
                     alpha = t;
                 } else if (elapsed > duration - 0.45) {
                     const t = (elapsed - (duration - 0.45)) / 0.45;
-                    y = THREE.MathUtils.lerp(-0.28, -0.54, easeOutCubic(t));
+                    y = THREE.MathUtils.lerp(-0.46, -0.72, easeOutCubic(t));
                     alpha = 1 - t;
                 }
 
@@ -1325,6 +1325,16 @@
                     ctx.fillText(text, 128, 94);
                     ctx.font = 'bold 32px Courier New';
                     ctx.fillText(`LEN ${hpText}`, 128, 154);
+                } else if (enemy.type === 'bool') {
+                    const boolStates = getBoolStateLines(enemy);
+                    const lineHeight = boolStates.length > 3 ? 36 : 44;
+                    const startY = 110 - ((boolStates.length - 1) * lineHeight) / 2;
+                    ctx.font = boolStates.length > 3 ? 'bold 30px Courier New' : 'bold 38px Courier New';
+                    boolStates.forEach((state, idx) => {
+                        ctx.fillText(state ? 'True' : 'False', 128, startY + idx * lineHeight);
+                    });
+                    ctx.font = 'bold 22px Courier New';
+                    ctx.fillText(enemy.isBoss ? 'BOOL BOSS' : 'BOOL', 128, 220);
                 } else {
                     ctx.font = enemy.label && enemy.label.length > 6 ? 'bold 34px Courier New' : 'bold 46px Courier New';
                     ctx.fillText(enemy.label, 128, 96);
@@ -1332,17 +1342,24 @@
                     ctx.fillText(`HP ${hpText}`, 128, 154);
                 }
 
-                if (enemy.isBoss) {
+                if (enemy.isBoss && enemy.type !== 'bool') {
                     ctx.font = 'bold 24px Courier New';
                     ctx.fillStyle = flash ? '#ffffff' : '#ffcc00';
                     ctx.fillText('BOSS', 128, 212);
-                } else if (enemy.floating) {
-                    ctx.font = 'bold 22px Courier New';
-                    ctx.fillStyle = flash ? '#ffffff' : colorCss;
-                    ctx.fillText('FLOATING', 128, 222);
                 }
 
                 return new THREE.CanvasTexture(canvas);
+            }
+
+            function getBoolStateLines(enemy) {
+                const maxHp = Math.max(1, Math.ceil(enemy.maxHp || enemy.hp || 1));
+                const slots = Math.max(1, Math.ceil(Math.log2(maxHp + 1)));
+                const value = Math.max(0, Math.ceil(enemy.hp || 0));
+                const states = [];
+                for (let i = 0; i < slots; i++) {
+                    states.push((value & (1 << i)) !== 0);
+                }
+                return states;
             }
 
             function formatEnemyHp(enemy) {
@@ -1370,7 +1387,11 @@
                 if (type === 'int') {
                     return Math.max(1, Math.round((1 + (diff - 1) * 1.25 + Math.random() * Math.max(0.35, diff * 0.75)) * bossMul));
                 }
-                if (type === 'bool') return Math.max(1, Math.round((1 + (diff - 1) * 1.1 + Math.random() * 1.2) * bossMul));
+                if (type === 'bool') {
+                    const rawHp = Math.max(1, Math.round((1 + (diff - 1) * 1.1 + Math.random() * 1.2) * bossMul));
+                    const slots = Math.max(1, Math.ceil(Math.log2(rawHp + 1)));
+                    return Math.pow(2, slots) - 1;
+                }
                 if (type === 'string') return Math.max(2, Math.round((2 + (diff - 1) * 1.4 + Math.random() * 1.8) * bossMul));
                 return Math.max(1, Math.round(diff * bossMul));
             }
@@ -1399,7 +1420,7 @@
                 const label = actualType === 'string'
                     ? `"${stringValue}"`
                     : actualType === 'bool'
-                        ? choose(typeLabels.bool)
+                        ? 'BOOL'
                         : actualType.toUpperCase();
 
                 const spot = forcedPosition || getRandomSpawnSpot();
@@ -1470,17 +1491,54 @@
                     material,
                     type: 'boss',
                     label: 'Variable Overload',
-                    hp: 120,
-                    maxHp: 120,
+                    hp: 240,
+                    maxHp: 240,
                     floating: false,
                     bobOffset: 0,
                     box: new THREE.Box3().setFromObject(mesh),
                     speed: 2.3,
                     attackCooldown: 0,
                     spawnAddsCooldown: 4,
+                    teleportCooldown: 5.0,
                     isBoss: true,
                     isFinalBoss: true
                 });
+            }
+
+            function getRandomBossTeleportSpot() {
+                const candidates = [];
+                const px = Math.floor(playerDolly.position.x / TILE_SIZE);
+                const pz = Math.floor(playerDolly.position.z / TILE_SIZE);
+
+                for (let z = 2; z < GRID_SIZE - 2; z++) {
+                    for (let x = 2; x < GRID_SIZE - 2; x++) {
+                        if (mapGrid[z][x] !== 0) continue;
+                        if (Math.abs(x - px) + Math.abs(z - pz) < 5) continue;
+                        if (!isBossTeleportCellClear(x, z)) continue;
+                        candidates.push({ x, z });
+                    }
+                }
+                return candidates.length ? choose(candidates) : getRandomOpenSpotNearCenter();
+            }
+
+            function isBossTeleportCellClear(x, z) {
+                for (let dz = -1; dz <= 1; dz++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const nx = x + dx;
+                        const nz = z + dz;
+                        if (nx < 1 || nx >= GRID_SIZE - 1 || nz < 1 || nz >= GRID_SIZE - 1) return false;
+                        if (mapGrid[nz][nx] === 1) return false;
+                    }
+                }
+                return true;
+            }
+
+            function teleportFinalBoss(enemy) {
+                const spot = getRandomBossTeleportSpot();
+                if (!spot) return;
+                enemy.mesh.position.set(spot.x * TILE_SIZE, 3.5, spot.z * TILE_SIZE);
+                enemy.box.setFromObject(enemy.mesh);
+                updateHUD('VARIABLE OVERLOAD SE REUBICÓ');
             }
 
             function getRandomSpawnSpot() {
@@ -1814,7 +1872,7 @@
                     return;
                 }
 
-                if (enemy.type === 'int') {
+                if (enemy.type === 'int' || enemy.type === 'bool') {
                     if (exactTypeHit) {
                         enemy.hp = Math.max(0, Math.floor(enemy.hp - Math.round(damage)));
                     } else {
@@ -1935,6 +1993,13 @@
 
                     if (e.isFinalBoss) {
                         e.spawnAddsCooldown -= delta;
+                        e.teleportCooldown = Math.max(0, (e.teleportCooldown || 0) - delta);
+
+                        if (e.teleportCooldown <= 0) {
+                            teleportFinalBoss(e);
+                            e.teleportCooldown = THREE.MathUtils.randFloat(5.5, 8.5);
+                        }
+
                         if (e.spawnAddsCooldown <= 0 && enemies.length < 10) {
                             for (let n = 0; n < 2; n++) {
                                 spawnEnemy({ types: ['int', 'float', 'string', 'bool'], difficulty: 1.7, bossChance: 0 }, choose(['int', 'float', 'string', 'bool']));
