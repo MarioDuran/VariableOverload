@@ -37,6 +37,18 @@
             width: 100vw;
             height: 100vh;
             z-index: 1;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transition: opacity 0.18s ease;
+        }
+        body.game-active #game-container {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+        }
+        body.game-active #info {
+            display: none;
         }
         #error-log { color: #ff0000; font-weight: bold; margin-top: 20px; }
     </style>
@@ -201,6 +213,7 @@
 
             const roomStates = new Map();
             const claimedUpgrades = new Set();
+            let lastRouteInstruction = missions[0].intro;
 
             // --- MAPA / ENTIDADES ---
             let mapGrid = [];
@@ -275,9 +288,15 @@
                 document.getElementById('game-container').appendChild(renderer.domElement);
 
                 const vrButton = VRButton.createButton(renderer);
-                vrButton.addEventListener('click', () => {
-                    document.getElementById('info').style.display = 'none';
+                const enterGameFromVR = () => {
+                    document.body.classList.add('game-active');
                     if (!isGameRunning) startGame();
+                };
+                renderer.xr.addEventListener('sessionstart', enterGameFromVR);
+                vrButton.addEventListener('click', () => {
+                    // El mundo se muestra únicamente después de pedir entrar a modo VR.
+                    // Así el menú inicial queda limpio: solo título + botón VR.
+                    enterGameFromVR();
                 });
                 document.body.appendChild(vrButton);
 
@@ -444,6 +463,7 @@
                 currentWeaponIndex = 0;
                 checkpointWeaponType = 'int';
                 missionIndex = 0;
+                lastRouteInstruction = missions[0].intro;
                 finalBossSpawned = false;
                 finalBossDefeated = false;
                 roomStates.clear();
@@ -466,7 +486,27 @@
 
                 notifyTecGPT('¡Boss, soy tu asistente TecGPT, te encuentras en el directorio home del servidor.!');
                 notifyTecGPT('Ha sido infectado por el virus Variable Overload. De momento todo parece manejable porque son puras variables de tipo entero. Utiliza tu pistola ARC para eliminarlas.');
-                notifyTecGPT(missions[0].intro);
+                notifyTecGPT(lastRouteInstruction);
+            }
+
+            function rememberCurrentRouteInstruction() {
+                const mission = missions[missionIndex];
+                lastRouteInstruction = mission ? mission.intro : '';
+                return lastRouteInstruction;
+            }
+
+            function repeatLastRouteInstruction() {
+                const instruction = rememberCurrentRouteInstruction() || lastRouteInstruction;
+                if (instruction) notifyTecGPT(instruction);
+            }
+
+            function snapshotRoomStates() {
+                return new Map([...roomStates.entries()].map(([path, state]) => [path, { ...state }]));
+            }
+
+            function restoreRoomStates(snapshot) {
+                roomStates.clear();
+                snapshot.forEach((state, path) => roomStates.set(path, { ...state }));
             }
 
             // --- NOTIFICACIONES Y VOZ ---
@@ -1245,7 +1285,7 @@
                 if (mission && currentPath === mission.route && mission.unlock !== 'auto') {
                     missionIndex++;
                     if (missions[missionIndex]) {
-                        notifyTecGPT(missions[missionIndex].intro);
+                        notifyTecGPT(rememberCurrentRouteInstruction());
                     }
                 }
             }
@@ -2244,29 +2284,66 @@
 
             function respawnAtCheckpoint() {
                 if (isDirectoryTransitioning) return;
+
+                const checkpoint = {
+                    unlockedWeapons: [...unlockedWeapons],
+                    currentWeapon: getCurrentWeaponType(),
+                    checkpointWeaponType,
+                    missionIndex,
+                    lastRouteInstruction: rememberCurrentRouteInstruction(),
+                    roomStates: snapshotRoomStates(),
+                    claimedUpgrades: new Set(claimedUpgrades),
+                    finalBossDefeated,
+                    score
+                };
+
                 isDirectoryTransitioning = true;
                 isGameRunning = false;
                 playerDeathVoiceQueued = true;
                 playPlayerDamageSound();
+
+                // Que el mensaje de muerte y la ruta actual no queden enterrados debajo de diálogos viejos.
+                notificationQueue.length = 0;
                 notifyTecGPT('¡Boss, ¿estás bien? No me aparece tu ubicación, Boss ¡por favor, responde!');
                 showLoadingScreen('/');
 
-                const savedWeapon = checkpointWeaponType || unlockedWeapons[unlockedWeapons.length - 1] || 'int';
                 setTimeout(() => {
                     cleanupActiveRoomEntities();
+
+                    unlockedWeapons = [...checkpoint.unlockedWeapons];
+                    missionIndex = checkpoint.missionIndex;
+                    checkpointWeaponType = checkpoint.checkpointWeaponType;
+                    lastRouteInstruction = checkpoint.lastRouteInstruction;
+                    score = checkpoint.score;
+
+                    claimedUpgrades.clear();
+                    checkpoint.claimedUpgrades.forEach(type => claimedUpgrades.add(type));
+                    restoreRoomStates(checkpoint.roomStates);
+
+                    // Si moriste en la pelea final, la siguiente visita debe reactivar el encuentro.
+                    finalBossDefeated = checkpoint.finalBossDefeated;
+                    finalBossSpawned = false;
+
                     health = 100;
                     stamina = MAX_STAMINA;
                     clipAmmo = Math.min(MAX_AMMO, Math.max(clipAmmo, 120));
+                    isReloading = false;
+                    rapidFireUntil = 0;
+
                     loadDirectory('/');
-                    const savedIndex = unlockedWeapons.indexOf(savedWeapon);
+
+                    const savedIndex = unlockedWeapons.indexOf(checkpoint.currentWeapon);
                     currentWeaponIndex = savedIndex >= 0 ? savedIndex : Math.max(0, unlockedWeapons.length - 1);
                     updateWeaponMaterial();
+
                     hideLoadingScreen();
                     isDirectoryTransitioning = false;
                     isGameRunning = true;
                     playerDeathVoiceQueued = false;
                     lastBehindWarningTime = clock.getElapsedTime();
                     updateHUD('CHECKPOINT RESTAURADO');
+
+                    repeatLastRouteInstruction();
                 }, 900);
             }
 
